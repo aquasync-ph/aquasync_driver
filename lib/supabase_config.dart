@@ -12,7 +12,10 @@ class SupabaseConfig {
 
   static String get anonKey {
     final raw = dotenv.env['SUPABASE_ANON_KEY'] ?? '';
-    final cleaned = raw.replaceAll(RegExp(r'[\s\"\'\]\[\)]'), '');
+    String cleaned = raw.trim();
+    for (final char in ['[', ']', '(', ')', '"', "'", ' ']) {
+      cleaned = cleaned.replaceAll(char, '');
+    }
     if (cleaned.isNotEmpty) {
       return cleaned;
     }
