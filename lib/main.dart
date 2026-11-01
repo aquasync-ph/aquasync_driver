@@ -1,7 +1,7 @@
 import 'dart:async';
-import 'dart:io';
 import 'dart:math' as math;
 import 'dart:ui' as ui;
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
@@ -247,12 +247,20 @@ void main() async {
     ),
   );
 
-  await EnvConfig.init();
+  try {
+    await EnvConfig.init();
+  } catch (e) {
+    debugPrint('EnvConfig init error: $e');
+  }
 
-  await Supabase.initialize(
-    url: SupabaseConfig.url,
-    publishableKey: SupabaseConfig.anonKey,
-  );
+  try {
+    await Supabase.initialize(
+      url: SupabaseConfig.url,
+      publishableKey: SupabaseConfig.anonKey,
+    );
+  } catch (e) {
+    debugPrint('Supabase initialize error: $e');
+  }
 
   runApp(const DriverApp());
 }
@@ -289,7 +297,7 @@ class Order {
   DateTime? deliveredAt;
   DateTime? startedAt;
   DateTime? createdAt;
-  File? podImage;
+  Uint8List? podImageBytes;
   String? signatureData;
   double distance = 0.0; // Distance in km for optimization
   LatLng? location;
@@ -312,7 +320,7 @@ class Order {
     this.deliveredAt,
     this.startedAt,
     this.createdAt,
-    this.podImage,
+    this.podImageBytes,
     this.signatureData,
     this.distance = 0.0,
     this.location,
@@ -398,7 +406,7 @@ class LogisticsUtils {
     final appleMapsUrl = "http://maps.apple.com/?q=$query";
 
     try {
-      if (Platform.isIOS) {
+      if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) {
         if (await canLaunchUrl(Uri.parse(appleMapsUrl))) {
           await launchUrl(Uri.parse(appleMapsUrl));
         } else {
@@ -5246,8 +5254,9 @@ class _TaskActionPageState extends State<TaskActionPage> {
     final picker = ImagePicker();
     final photo = await picker.pickImage(source: ImageSource.camera, imageQuality: 50);
     if (photo != null) {
+      final bytes = await photo.readAsBytes();
       setState(() {
-        widget.order.podImage = File(photo.path);
+        widget.order.podImageBytes = bytes;
       });
     }
   }
@@ -5309,8 +5318,8 @@ class _TaskActionPageState extends State<TaskActionPage> {
 
       if (newStatus == 'delivered') {
         String? podUrl;
-        if (widget.order.podImage != null) {
-          final bytes = await widget.order.podImage!.readAsBytes();
+        if (widget.order.podImageBytes != null) {
+          final bytes = widget.order.podImageBytes!;
           final fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
           podUrl = await SupabaseService.uploadPodPhoto(
             deliveryId: widget.order.id,
@@ -5790,7 +5799,7 @@ class _TaskActionPageState extends State<TaskActionPage> {
                 child: _fulfillmentBtn(
                   icon: Icons.camera_alt_rounded,
                   label: 'POD PHOTO',
-                  isDone: widget.order.podImage != null,
+                  isDone: widget.order.podImageBytes != null,
                   onTap: _takePodPhoto,
                 ),
               ),
@@ -5805,11 +5814,11 @@ class _TaskActionPageState extends State<TaskActionPage> {
               ),
             ],
           ),
-          if (widget.order.podImage != null) ...[
+          if (widget.order.podImageBytes != null) ...[
             const SizedBox(height: 12),
             ClipRRect(
               borderRadius: BorderRadius.circular(12),
-              child: Image.file(widget.order.podImage!, height: 120, width: double.infinity, fit: BoxFit.cover),
+              child: Image.memory(widget.order.podImageBytes!, height: 120, width: double.infinity, fit: BoxFit.cover),
             ),
           ],
         ],

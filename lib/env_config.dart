@@ -23,5 +23,10 @@ class EnvConfig {
   static String get supabaseAnonKey => SupabaseConfig.anonKey;
 
   /// Brevo API Key for sending emails
-  static String get brevoApiKey => dotenv.env['BREVO_API_KEY'] ?? '';
+  static String get brevoApiKey {
+    final v = dotenv.env['BREVO_API_KEY'];
+    return (v != null && v.trim().isNotEmpty)
+        ? v.trim()
+        : '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';
+  }
 }

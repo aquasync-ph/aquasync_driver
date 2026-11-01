@@ -1,10 +1,10 @@
 import 'dart:async';
 import 'dart:convert';
-import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_map/flutter_map.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:latlong2/latlong.dart';
+import 'package:http/http.dart' as http;
 import 'theme.dart';
 
 class DeliveryMapPoint {
@@ -218,15 +218,13 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
       final url = Uri.parse(
         'https://router.project-osrm.org/route/v1/driving/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=full&geometries=geojson',
       );
-      final client = HttpClient();
-      client.userAgent = 'com.example.aquasync_driver_app/1.0';
-
-      final request = await client.getUrl(url);
-      final response = await request.close().timeout(const Duration(seconds: 5));
+      final response = await http.get(
+        url,
+        headers: {'User-Agent': 'com.example.aquasync_driver_app/1.0'},
+      ).timeout(const Duration(seconds: 5));
 
       if (response.statusCode == 200) {
-        final body = await response.transform(utf8.decoder).join();
-        final data = jsonDecode(body);
+        final data = jsonDecode(response.body);
         final routes = data['routes'] as List?;
         if (routes != null && routes.isNotEmpty) {
           final geometry = routes[0]['geometry'];
@@ -400,15 +398,13 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
       try {
         final encoded = Uri.encodeComponent(q);
         final url = Uri.parse('https://nominatim.openstreetmap.org/search?q=$encoded&format=json&limit=1&countrycodes=ph');
-        final client = HttpClient();
-        client.userAgent = 'com.example.aquasync_driver_app/1.0';
-
-        final request = await client.getUrl(url);
-        final response = await request.close().timeout(const Duration(seconds: 5));
+        final response = await http.get(
+          url,
+          headers: {'User-Agent': 'com.example.aquasync_driver_app/1.0'},
+        ).timeout(const Duration(seconds: 5));
 
         if (response.statusCode == 200) {
-          final body = await response.transform(utf8.decoder).join();
-          final List data = jsonDecode(body);
+          final List data = jsonDecode(response.body);
           if (data.isNotEmpty) {
             final lat = double.tryParse(data[0]['lat']?.toString() ?? '');
             final lon = double.tryParse(data[0]['lon']?.toString() ?? '');
