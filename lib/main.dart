@@ -522,10 +522,10 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
     await Future.delayed(const Duration(milliseconds: 2800));
     if (!mounted) return;
 
-    if (SupabaseService.isAuthenticated) {
-      final user = SupabaseService.currentUser;
-      if (user != null) {
-        try {
+    try {
+      if (SupabaseService.isAuthenticated) {
+        final user = SupabaseService.currentUser;
+        if (user != null) {
           final profile = await SupabaseService.fetchProfile(user.id);
           if (profile != null && profile['role'] == 'driver') {
             if (!mounted) return;
@@ -544,8 +544,10 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
             );
             return;
           }
-        } catch (_) {}
+        }
       }
+    } catch (e) {
+      debugPrint('Auth check error: $e');
     }
 
     if (!mounted) return;

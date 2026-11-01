@@ -4,8 +4,21 @@ import 'package:supabase_flutter/supabase_flutter.dart';
 class SupabaseService {
   static SupabaseClient get client => Supabase.instance.client;
 
-  static User? get currentUser => client.auth.currentUser;
-  static bool get isAuthenticated => currentUser != null;
+  static User? get currentUser {
+    try {
+      return client.auth.currentUser;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  static bool get isAuthenticated {
+    try {
+      return currentUser != null;
+    } catch (_) {
+      return false;
+    }
+  }
 
   // --- AUTHENTICATION ---
   static Future<AuthResponse> signInWithPassword({
