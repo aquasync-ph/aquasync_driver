@@ -19,6 +19,7 @@ import 'supabase_service.dart';
 import 'theme.dart';
 import 'scanned_items_manager.dart';
 import 'in_app_map_widget.dart';
+import 'local_notification_service.dart';
 
 // -----------------------------------------------------------------------------
 // UI COMPONENTS: MODERN ALERTS
@@ -262,6 +263,12 @@ void main() async {
     debugPrint('Supabase initialize error: $e');
   }
 
+  try {
+    await LocalNotificationService.initialize();
+  } catch (e) {
+    debugPrint('LocalNotificationService initialize error: $e');
+  }
+
   runApp(const DriverApp());
 }
 
@@ -331,8 +338,62 @@ class Order {
 }
 
 // -----------------------------------------------------------------------------
-// UTILS: LOGISTICS HELPERS
+// UTILS: LOGISTICS & STATION HELPERS
 // -----------------------------------------------------------------------------
+
+class StationInfo {
+  final String name;
+  final String? address;
+  final LatLng? location;
+  final double? radiusKm;
+
+  StationInfo({
+    required this.name,
+    this.address,
+    this.location,
+    this.radiusKm,
+  });
+
+  factory StationInfo.fromMap(Map<String, dynamic>? data) {
+    if (data == null || data.isEmpty) {
+      return StationInfo(name: 'Water Refill Station');
+    }
+
+    final lat = LogisticsUtils.parseNum(data['station_latitude']) ??
+        LogisticsUtils.parseNum(data['latitude']) ??
+        LogisticsUtils.parseNum(data['lat']);
+
+    final lng = LogisticsUtils.parseNum(data['station_longitude']) ??
+        LogisticsUtils.parseNum(data['longitude']) ??
+        LogisticsUtils.parseNum(data['lng']);
+
+    final name = data['station_name']?.toString() ??
+        data['full_name']?.toString() ??
+        data['name']?.toString() ??
+        data['business_name']?.toString() ??
+        'Water Refill Station';
+
+    final address = data['station_address']?.toString() ?? data['address']?.toString();
+
+    final radiusKm = LogisticsUtils.parseNum(data['coverage_radius_km']) ??
+        LogisticsUtils.parseNum(data['geofence_radius_km']) ??
+        LogisticsUtils.parseNum(data['radius_km']) ??
+        LogisticsUtils.parseNum(data['geofence_radius']) ??
+        LogisticsUtils.parseNum(data['radius']);
+
+    LatLng? loc;
+    if (lat != null && lng != null && lat != 0 && lng != 0) {
+      loc = LatLng(lat.toDouble(), lng.toDouble());
+    }
+
+    return StationInfo(
+      name: name,
+      address: address,
+      location: loc,
+      radiusKm: radiusKm?.toDouble(),
+    );
+  }
+}
 
 class LogisticsUtils {
   static num? parseNum(dynamic val) {
@@ -1753,14 +1814,42 @@ class _DriverMainNavigationScreenState extends State<DriverMainNavigationScreen>
   int _currentIndex = 0;
   Order? _selectedOrderForScanning;
   RealtimeChannel? _globalChannel;
+  RealtimeChannel? _stationChannel;
   StreamSubscription<Position>? _locationSubscription;
   Position? _currentPosition;
+  Map<String, dynamic>? _stationData;
 
   @override
   void initState() {
     super.initState();
     _initRealtimeLocationTracking();
     _setupGlobalRealtime();
+    _initStationData();
+  }
+
+  Future<void> _initStationData() async {
+    try {
+      final station = await SupabaseService.fetchStationLocation();
+      if (mounted && station != null) {
+        setState(() {
+          _stationData = station;
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching station location: $e');
+    }
+
+    try {
+      _stationChannel = SupabaseService.subscribeToStationLocation((updated) {
+        if (mounted) {
+          setState(() {
+            _stationData = updated;
+          });
+        }
+      });
+    } catch (e) {
+      debugPrint('Error subscribing to station location: $e');
+    }
   }
 
   @override
@@ -1768,6 +1857,9 @@ class _DriverMainNavigationScreenState extends State<DriverMainNavigationScreen>
     _locationSubscription?.cancel();
     if (_globalChannel != null) {
       SupabaseService.removeChannel(_globalChannel!);
+    }
+    if (_stationChannel != null) {
+      SupabaseService.removeChannel(_stationChannel!);
     }
     super.dispose();
   }
@@ -1893,17 +1985,36 @@ class _DriverMainNavigationScreenState extends State<DriverMainNavigationScreen>
           icon: icon,
           backgroundColor: bg,
         );
+
+        LocalNotificationService.showNotification(
+          title: title,
+          body: msg,
+        );
+
+        if (eventType != 'notifications') {
+          SupabaseService.createNotification(
+            userId: driverId,
+            title: title,
+            message: msg,
+            type: eventType,
+          );
+        }
       },
     );
   }
 
   @override
   Widget build(BuildContext context) {
+    final Map<String, dynamic> mergedProfile = {
+      ...?widget.profileData,
+      ...?_stationData,
+    };
+
     final List<Widget> pages = [
       TasksHomeScreen(
         driverName: widget.driverName,
         currentPosition: _currentPosition,
-        profileData: widget.profileData,
+        profileData: mergedProfile,
         onNavigateToScan: (order) {
           setState(() {
             _selectedOrderForScanning = order;
@@ -1919,7 +2030,7 @@ class _DriverMainNavigationScreenState extends State<DriverMainNavigationScreen>
       ),
       DriverProfileScreen(
         driverName: widget.driverName,
-        profileData: widget.profileData,
+        profileData: mergedProfile,
         currentPosition: _currentPosition,
       ),
     ];
@@ -2112,6 +2223,10 @@ class _DriverMainNavigationScreenState extends State<DriverMainNavigationScreen>
 // DRIVER NOTIFICATION CENTER SHEET (Real-time Admin Dispatches & Notifications)
 // -----------------------------------------------------------------------------
 
+// -----------------------------------------------------------------------------
+// DRIVER NOTIFICATION CENTER SHEET (Real-time Admin Dispatches & Notifications)
+// -----------------------------------------------------------------------------
+
 class DriverNotificationCenterSheet extends StatefulWidget {
   final List<Order> activeOrders;
 
@@ -2196,7 +2311,7 @@ class _DriverNotificationCenterSheetState extends State<DriverNotificationCenter
       await SupabaseService.markNotificationAsRead(id);
       if (mounted) {
         setState(() {
-          final idx = _dbNotifications.indexWhere((n) => n['id'] == id);
+          final idx = _dbNotifications.indexWhere((n) => n['id']?.toString() == id);
           if (idx != -1) {
             _dbNotifications[idx]['is_read'] = true;
           }
@@ -2207,10 +2322,87 @@ class _DriverNotificationCenterSheetState extends State<DriverNotificationCenter
     }
   }
 
+  Future<void> _markAllAsRead() async {
+    final user = SupabaseService.currentUser;
+    if (user == null || _dbNotifications.isEmpty) return;
+
+    try {
+      setState(() {
+        for (var n in _dbNotifications) {
+          n['is_read'] = true;
+        }
+      });
+      await SupabaseService.markAllNotificationsAsRead(user.id);
+    } catch (e) {
+      debugPrint('Error marking all notifications read: $e');
+    }
+  }
+
+  Future<void> _deleteSingleNotification(String id) async {
+    try {
+      setState(() {
+        _dbNotifications.removeWhere((n) => n['id']?.toString() == id);
+      });
+      await SupabaseService.deleteNotification(id);
+    } catch (e) {
+      debugPrint('Error deleting single notification: $e');
+    }
+  }
+
+  Future<void> _deleteAllNotifications() async {
+    final user = SupabaseService.currentUser;
+    if (user == null || _dbNotifications.isEmpty) return;
+
+    final confirm = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        title: const Row(
+          children: [
+            Icon(Icons.delete_sweep_rounded, color: Colors.redAccent),
+            SizedBox(width: 8),
+            Text('Delete All Notifications', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold)),
+          ],
+        ),
+        content: const Text(
+          'Are you sure you want to delete all notifications? This action cannot be undone.',
+          style: TextStyle(fontSize: 13, color: AppColors.darkNavy),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel', style: TextStyle(color: AppColors.grayText, fontWeight: FontWeight.bold)),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: Colors.red[600],
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete All', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+          ),
+        ],
+      ),
+    );
+
+    if (confirm == true) {
+      try {
+        setState(() {
+          _dbNotifications.clear();
+        });
+        await SupabaseService.deleteAllNotifications(user.id);
+      } catch (e) {
+        debugPrint('Error deleting all notifications: $e');
+      }
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
+    final hasUnread = _dbNotifications.any((n) => n['is_read'] != true);
+
     return Container(
-      height: MediaQuery.of(context).size.height * 0.80,
+      height: MediaQuery.of(context).size.height * 0.85,
       decoration: const BoxDecoration(
         color: Color(0xFFF4FAFE),
         borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
@@ -2253,6 +2445,48 @@ class _DriverNotificationCenterSheetState extends State<DriverNotificationCenter
                   ),
                 ),
                 const SizedBox(width: 8),
+                InkWell(
+                  onTap: () async {
+                    await LocalNotificationService.requestPermission();
+                    final user = SupabaseService.currentUser;
+                    if (user != null) {
+                      await SupabaseService.createNotification(
+                        userId: user.id,
+                        title: '🔔 TEST NOTIFICATION',
+                        message: 'Gumagana ang notification sa loob at labas ng app na may tunog!',
+                        type: 'test',
+                      );
+                      await _fetchDbNotifications();
+                    }
+                    if (!mounted) return;
+                    await LocalNotificationService.showNotification(
+                      title: '🔔 TEST NOTIFICATION',
+                      body: 'Gumagana ang notification sa loob at labas ng app na may tunog!',
+                    );
+                    if (!mounted) return;
+                    LogisticsAlert.show(context, 'Test notification sent with sound!', type: AlertType.success);
+                  },
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                    decoration: BoxDecoration(
+                      color: AppColors.successGreen.withValues(alpha: 0.1),
+                      borderRadius: BorderRadius.circular(10),
+                      border: Border.all(color: AppColors.successGreen.withValues(alpha: 0.3)),
+                    ),
+                    child: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: const [
+                        Icon(Icons.volume_up_rounded, size: 14, color: AppColors.successGreen),
+                        SizedBox(width: 4),
+                        Text(
+                          'Test Sound',
+                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.successGreen),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 8),
                 Container(
                   padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
                   decoration: BoxDecoration(
@@ -2260,7 +2494,7 @@ class _DriverNotificationCenterSheetState extends State<DriverNotificationCenter
                     borderRadius: BorderRadius.circular(12),
                   ),
                   child: Text(
-                    '${widget.activeOrders.length} Pending Dispatches',
+                    '${widget.activeOrders.length} Dispatches',
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
                     style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primary),
@@ -2299,7 +2533,7 @@ class _DriverNotificationCenterSheetState extends State<DriverNotificationCenter
                                 ),
                                 const SizedBox(height: 4),
                                 const Text(
-                                  'New dispatch assignments from Admin will appear here in real-time.',
+                                  'New dispatch assignments and system notices will appear here.',
                                   textAlign: TextAlign.center,
                                   style: TextStyle(fontSize: 12, color: AppColors.grayText),
                                 ),
@@ -2322,14 +2556,59 @@ class _DriverNotificationCenterSheetState extends State<DriverNotificationCenter
                             const SizedBox(height: 20),
                           ],
                           if (_dbNotifications.isNotEmpty) ...[
-                            const Text(
-                              'SYSTEM & ORDER UPDATES',
-                              style: TextStyle(
-                                fontSize: 11,
-                                fontWeight: FontWeight.w900,
-                                color: AppColors.grayText,
-                                letterSpacing: 0.8,
-                              ),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                const Text(
+                                  'SYSTEM & ORDER UPDATES',
+                                  style: TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w900,
+                                    color: AppColors.grayText,
+                                    letterSpacing: 0.8,
+                                  ),
+                                ),
+                                Row(
+                                  children: [
+                                    if (hasUnread)
+                                      InkWell(
+                                        onTap: _markAllAsRead,
+                                        borderRadius: BorderRadius.circular(8),
+                                        child: Padding(
+                                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                          child: Row(
+                                            children: const [
+                                              Icon(Icons.done_all_rounded, size: 14, color: AppColors.primary),
+                                              SizedBox(width: 4),
+                                              Text(
+                                                'Mark All Read',
+                                                style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.primary),
+                                              ),
+                                            ],
+                                          ),
+                                        ),
+                                      ),
+                                    const SizedBox(width: 8),
+                                    InkWell(
+                                      onTap: _deleteAllNotifications,
+                                      borderRadius: BorderRadius.circular(8),
+                                      child: Padding(
+                                        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                                        child: Row(
+                                          children: const [
+                                            Icon(Icons.delete_sweep_rounded, size: 14, color: Colors.redAccent),
+                                            SizedBox(width: 4),
+                                            Text(
+                                              'Delete All',
+                                              style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.redAccent),
+                                            ),
+                                          ],
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ],
                             ),
                             const SizedBox(height: 10),
                             ..._dbNotifications.map((n) => _buildDbNotificationCard(n)),
@@ -2429,37 +2708,53 @@ class _DriverNotificationCenterSheetState extends State<DriverNotificationCenter
   }
 
   Widget _buildDbNotificationCard(Map<String, dynamic> n) {
+    final id = n['id']?.toString() ?? '';
     final isRead = n['is_read'] == true;
     final title = n['title']?.toString() ?? 'SYSTEM NOTICE';
     final message = n['message']?.toString() ?? n['body']?.toString() ?? '';
 
-    return GestureDetector(
-      onTap: () {
-        if (!isRead && n['id'] != null) {
-          _markRead(n['id'].toString());
-        }
-      },
-      child: Container(
-        margin: const EdgeInsets.only(bottom: 10),
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: isRead ? Colors.white : AppColors.primary.withValues(alpha: 0.05),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(
-            color: isRead ? AppColors.border : AppColors.primary.withValues(alpha: 0.3),
-            width: isRead ? 1.0 : 1.5,
-          ),
+    String timeStr = '';
+    if (n['created_at'] != null) {
+      try {
+        final dt = DateTime.parse(n['created_at'].toString()).toLocal();
+        timeStr = DateFormat('MMM d, h:mm a').format(dt);
+      } catch (_) {}
+    }
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: isRead ? Colors.white : AppColors.primary.withValues(alpha: 0.05),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(
+          color: isRead ? AppColors.border : AppColors.primary.withValues(alpha: 0.3),
+          width: isRead ? 1.0 : 1.5,
         ),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Icon(
+      ),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          GestureDetector(
+            onTap: () {
+              if (id.isNotEmpty) {
+                _markRead(id);
+              }
+            },
+            child: Icon(
               isRead ? Icons.notifications_none_rounded : Icons.notifications_active_rounded,
               color: isRead ? AppColors.grayText : AppColors.primary,
               size: 20,
             ),
-            const SizedBox(width: 10),
-            Expanded(
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: GestureDetector(
+              onTap: () {
+                if (!isRead && id.isNotEmpty) {
+                  _markRead(id);
+                }
+              },
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
@@ -2498,11 +2793,30 @@ class _DriverNotificationCenterSheetState extends State<DriverNotificationCenter
                       style: const TextStyle(fontSize: 11, color: AppColors.darkText),
                     ),
                   ],
+                  if (timeStr.isNotEmpty) ...[
+                    const SizedBox(height: 6),
+                    Text(
+                      timeStr,
+                      style: const TextStyle(fontSize: 10, color: AppColors.grayText, fontWeight: FontWeight.w500),
+                    ),
+                  ],
                 ],
               ),
             ),
-          ],
-        ),
+          ),
+          const SizedBox(width: 8),
+          IconButton(
+            constraints: const BoxConstraints(),
+            padding: const EdgeInsets.all(4),
+            icon: Icon(Icons.delete_outline_rounded, size: 18, color: Colors.grey[500]),
+            tooltip: 'Delete',
+            onPressed: () {
+              if (id.isNotEmpty) {
+                _deleteSingleNotification(id);
+              }
+            },
+          ),
+        ],
       ),
     );
   }
@@ -2703,7 +3017,7 @@ class _TasksHomeScreenState extends State<TasksHomeScreen> with WidgetsBindingOb
           orderId: orderData['id']?.toString() ?? '', // Order UUID
           orderNumber: orderData['order_number']?.toString() ?? (orderData['id'] != null ? 'ORD-${orderData['id'].toString().substring(0, orderData['id'].toString().length < 4 ? orderData['id'].toString().length : 4)}' : 'N/A'),
           customer: customerName,
-          customerId: orderData['customer_id']?.toString() ?? '',
+          customerId: orderData['customer_id']?.toString() ?? orderData['user_id']?.toString() ?? (profilesData is Map ? profilesData['id']?.toString() : null) ?? '',
           phone: customerPhone,
           address: customerAddress,
           quantity: desc.isEmpty ? 'Gallon Delivery' : desc.trim(),
@@ -2876,20 +3190,16 @@ class _TasksHomeScreenState extends State<TasksHomeScreen> with WidgetsBindingOb
                                         final fallbackLat = pos?.latitude ?? 14.2272;
                                         final fallbackLng = pos?.longitude ?? 121.3283;
                                         final activeOrders = _allDeliveries.where((o) => o.status != 'delivered').toList();
-                                        final stationName = widget.profileData?['station_name']?.toString() ?? widget.profileData?['business_name']?.toString() ?? 'Water Station';
-                                        LatLng? stationLoc;
-                                        final statLat = LogisticsUtils.parseNum(widget.profileData?['station_latitude']) ?? LogisticsUtils.parseNum(widget.profileData?['latitude']);
-                                        final statLng = LogisticsUtils.parseNum(widget.profileData?['station_longitude']) ?? LogisticsUtils.parseNum(widget.profileData?['longitude']);
-                                        if (statLat != null && statLng != null) {
-                                          stationLoc = LatLng(statLat.toDouble(), statLng.toDouble());
-                                        }
+                                        final stationInfo = StationInfo.fromMap(widget.profileData);
 
                                         InAppMapWidget.showDriverLiveMapModal(
                                           context,
                                           location: pos != null ? LatLng(pos.latitude, pos.longitude) : null,
                                           driverName: widget.driverName,
-                                          stationName: stationName,
-                                          stationLocation: stationLoc,
+                                          stationName: stationInfo.name,
+                                          stationAddress: stationInfo.address,
+                                          stationLocation: stationInfo.location,
+                                          geofenceRadiusKm: stationInfo.radiusKm,
                                           multiDeliveryPoints: activeOrders.map((o) {
                                             return DeliveryMapPoint(
                                               orderId: o.id,
@@ -3052,20 +3362,16 @@ class _TasksHomeScreenState extends State<TasksHomeScreen> with WidgetsBindingOb
                                 final pos = widget.currentPosition;
                                 final fallbackLat = pos?.latitude ?? 14.2272;
                                 final fallbackLng = pos?.longitude ?? 121.3283;
-                                final stationName = widget.profileData?['station_name']?.toString() ?? widget.profileData?['business_name']?.toString() ?? 'Water Station';
-                                LatLng? stationLoc;
-                                final statLat = LogisticsUtils.parseNum(widget.profileData?['station_latitude']) ?? LogisticsUtils.parseNum(widget.profileData?['latitude']);
-                                final statLng = LogisticsUtils.parseNum(widget.profileData?['station_longitude']) ?? LogisticsUtils.parseNum(widget.profileData?['longitude']);
-                                if (statLat != null && statLng != null) {
-                                  stationLoc = LatLng(statLat.toDouble(), statLng.toDouble());
-                                }
+                                final stationInfo = StationInfo.fromMap(widget.profileData);
 
                                 InAppMapWidget.showDriverLiveMapModal(
                                   context,
                                   location: pos != null ? LatLng(pos.latitude, pos.longitude) : null,
                                   driverName: widget.driverName,
-                                  stationName: stationName,
-                                  stationLocation: stationLoc,
+                                  stationName: stationInfo.name,
+                                  stationAddress: stationInfo.address,
+                                  stationLocation: stationInfo.location,
+                                  geofenceRadiusKm: stationInfo.radiusKm,
                                   multiDeliveryPoints: activeOrders.map((o) {
                                     return DeliveryMapPoint(
                                       orderId: o.id,
@@ -3106,12 +3412,10 @@ class _TasksHomeScreenState extends State<TasksHomeScreen> with WidgetsBindingOb
                                   ? LatLng(widget.currentPosition!.latitude, widget.currentPosition!.longitude)
                                   : null,
                               driverName: widget.driverName,
-                              stationName: widget.profileData?['station_name']?.toString() ?? widget.profileData?['business_name']?.toString() ?? 'Water Station',
-                              stationLocation: (() {
-                                final statLat = LogisticsUtils.parseNum(widget.profileData?['station_latitude']) ?? LogisticsUtils.parseNum(widget.profileData?['latitude']);
-                                final statLng = LogisticsUtils.parseNum(widget.profileData?['station_longitude']) ?? LogisticsUtils.parseNum(widget.profileData?['longitude']);
-                                return (statLat != null && statLng != null) ? LatLng(statLat.toDouble(), statLng.toDouble()) : null;
-                              })(),
+                              stationName: StationInfo.fromMap(widget.profileData).name,
+                              stationAddress: StationInfo.fromMap(widget.profileData).address,
+                              stationLocation: StationInfo.fromMap(widget.profileData).location,
+                              geofenceRadiusKm: StationInfo.fromMap(widget.profileData).radiusKm,
                               multiDeliveryPoints: activeOrders.map((o) {
                                 final fallbackLat = widget.currentPosition?.latitude ?? 14.2272;
                                 final fallbackLng = widget.currentPosition?.longitude ?? 121.3283;
@@ -3323,6 +3627,18 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
   }
 
   @override
+  void didUpdateWidget(covariant QrScannerScreen oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (widget.activeOrder != oldWidget.activeOrder) {
+      setState(() {
+        if (widget.activeOrder != null) {
+          _selectedOrderFromList = widget.activeOrder;
+        }
+      });
+    }
+  }
+
+  @override
   void dispose() {
     _scannerController.dispose();
     super.dispose();
@@ -3341,14 +3657,16 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
         final st = item['status']?.toString().toLowerCase() ?? '';
         if (st == 'out_for_delivery' || st == 'accepted' || st == 'assigned') {
           final orderData = item['orders'] ?? {};
-          final profilesData = orderData['profiles'] ?? {};
+          final profilesData = orderData['profiles'] ?? orderData['customer'] ?? {};
 
-          String custName = 'Customer';
-          String custId = '';
-          if (profilesData is Map && profilesData.isNotEmpty) {
-            custName = profilesData['full_name']?.toString() ?? 'Customer';
-            custId = profilesData['id']?.toString() ?? orderData['customer_id']?.toString() ?? '';
-          }
+          String custName = orderData['customer_name']?.toString()
+              ?? (profilesData is Map ? (profilesData['full_name']?.toString() ?? profilesData['name']?.toString()) : null)
+              ?? 'Customer';
+
+          String custId = orderData['customer_id']?.toString()
+              ?? orderData['user_id']?.toString()
+              ?? (profilesData is Map ? profilesData['id']?.toString() : null)
+              ?? '';
 
           final orderObj = Order(
             id: item['id']?.toString() ?? '',
@@ -3371,7 +3689,9 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
       if (mounted) {
         setState(() {
           _activeDriverOrders = activeList;
-          if (_selectedOrderFromList == null && _activeDriverOrders.isNotEmpty) {
+          if (widget.activeOrder != null) {
+            _selectedOrderFromList = widget.activeOrder;
+          } else if (_selectedOrderFromList == null && _activeDriverOrders.isNotEmpty) {
             _selectedOrderFromList = _activeDriverOrders.first;
           }
         });
@@ -3412,64 +3732,97 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
       } else {
         // Step 2: Container Record Found! Prepare Toggle Logic
         final currentStatus = gallonRecord['status']?.toString() ?? 'available';
-        final isCurrentlyBorrowed = (currentStatus.toLowerCase() == 'borrowed');
-
         final effectiveOrder = widget.activeOrder ?? _selectedOrderFromList;
 
-        final targetCustomerId = isCurrentlyBorrowed
-            ? gallonRecord['customer_id']?.toString()
-            : (effectiveOrder?.customerId ?? gallonRecord['customer_id']?.toString());
+        final hasOrderCustId = (effectiveOrder?.customerId != null && effectiveOrder!.customerId.isNotEmpty);
+        final hasOrderCustName = (effectiveOrder?.customer != null && effectiveOrder!.customer.isNotEmpty && effectiveOrder.customer != 'Customer' && effectiveOrder.customer != 'N/A');
 
-        final targetCustomerName = isCurrentlyBorrowed
-            ? (gallonRecord['customer_name']?.toString() ?? 'Assigned Customer')
-            : (effectiveOrder?.customer ?? gallonRecord['customer_name']?.toString() ?? 'Customer');
+        final targetCustomerId = hasOrderCustId
+            ? effectiveOrder.customerId
+            : (gallonRecord['customer_id']?.toString() ?? '');
+
+        final targetCustomerName = hasOrderCustName
+            ? effectiveOrder.customer
+            : (gallonRecord['customer_name']?.toString() ?? 'Customer');
 
         final gallonId = gallonRecord['id']?.toString() ?? '';
         final gallonCode = gallonRecord['gallon_code']?.toString() ?? rawCode;
 
         if (_isBatchScanMode) {
-          // --- BATCH SCAN MODE: Auto-execute real-time toggle in Supabase ---
-          final toggleResult = await SupabaseService.executeGallonStatusToggle(
-            gallonId: gallonId,
-            gallonCode: gallonCode,
-            currentStatus: currentStatus,
-            customerId: targetCustomerId,
-            customerName: targetCustomerName,
-            orderId: effectiveOrder?.orderId,
-          );
-
-          // Save locally to persist scan state
-          await ScannedItemsManager.instance.saveScannedItem(
-            ScannedGallonItem(
-              id: gallonId,
-              gallonCode: gallonCode,
-              orderId: effectiveOrder?.orderId ?? '',
-              orderNumber: effectiveOrder?.orderNumber ?? 'Batch Scan',
-              scannedAt: DateTime.now(),
-              status: toggleResult['new_status'] ?? 'borrowed',
-              customerName: targetCustomerName,
-              deliveryAddress: effectiveOrder?.address ?? '',
-            ),
-          );
-
           if (effectiveOrder != null) {
             effectiveOrder.verifiedGallonIds.add(gallonId);
             effectiveOrder.verifiedGallonCodes.add(gallonCode);
+
+            final keys = [effectiveOrder.orderId, effectiveOrder.id, effectiveOrder.orderNumber].where((k) => k.isNotEmpty).toList();
+            for (var k in keys) {
+              await ScannedItemsManager.instance.saveScannedItem(
+                ScannedGallonItem(
+                  id: gallonId,
+                  gallonCode: gallonCode,
+                  orderId: k,
+                  orderNumber: effectiveOrder.orderNumber,
+                  scannedAt: DateTime.now(),
+                  status: 'verified',
+                  customerName: targetCustomerName,
+                  deliveryAddress: effectiveOrder.address,
+                ),
+              );
+            }
+
+            setState(() {
+              _scanResultState = 'success';
+              _batchScannedList.insert(0, {
+                'gallon_code': gallonCode,
+                'new_status': 'verified',
+                'display_message': 'Gallon $gallonCode verified for Order #${effectiveOrder.orderNumber}',
+              });
+            });
+
+            DriverNotification.show(
+              context,
+              title: 'GALLON VERIFIED ✓',
+              message: 'Gallon $gallonCode verified for Order #${effectiveOrder.orderNumber}',
+              backgroundColor: AppColors.successGreen,
+              icon: Icons.check_circle_outline,
+            );
+          } else {
+            // --- BATCH SCAN MODE (No order): Real-time toggle in Supabase ---
+            final toggleResult = await SupabaseService.executeGallonStatusToggle(
+              gallonId: gallonId,
+              gallonCode: gallonCode,
+              currentStatus: currentStatus,
+              customerId: targetCustomerId.isNotEmpty ? targetCustomerId : null,
+              customerName: targetCustomerName,
+              orderId: null,
+            );
+
+            await ScannedItemsManager.instance.saveScannedItem(
+              ScannedGallonItem(
+                id: gallonId,
+                gallonCode: gallonCode,
+                orderId: '',
+                orderNumber: 'Batch Scan',
+                scannedAt: DateTime.now(),
+                status: toggleResult['new_status'] ?? 'borrowed',
+                customerName: targetCustomerName,
+                deliveryAddress: '',
+              ),
+            );
+
+            setState(() {
+              _latestToggleResult = toggleResult;
+              _scanResultState = 'success';
+              _batchScannedList.insert(0, toggleResult);
+            });
+
+            DriverNotification.show(
+              context,
+              title: toggleResult['new_status'] == 'borrowed' ? 'BORROWED ✓' : 'RETURNED ✓',
+              message: toggleResult['display_message'] ?? '',
+              backgroundColor: AppColors.successGreen,
+              icon: Icons.check_circle_outline,
+            );
           }
-
-          setState(() {
-            _latestToggleResult = toggleResult;
-            _scanResultState = 'success';
-            _batchScannedList.insert(0, toggleResult);
-          });
-
-          DriverNotification.show(
-            context,
-            title: toggleResult['new_status'] == 'borrowed' ? 'BORROWED ✓' : 'RETURNED ✓',
-            message: toggleResult['display_message'] ?? '',
-            backgroundColor: AppColors.successGreen,
-            icon: Icons.check_circle_outline,
-          );
         } else {
           // --- SINGLE SCAN MODE: Prompt Confirmation Card / Dialog with Details ---
           setState(() {
@@ -3672,7 +4025,11 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
             _detailRow('Gallon Code:', gallonCode),
             _detailRow(
               isCurrentlyBorrowed ? 'Previous Owner:' : 'Assigned Customer:',
-              targetCustomerName ?? 'Customer',
+              isCurrentlyBorrowed
+                  ? (gallonRecord['customer_name']?.toString() ?? (effectiveOrder != null && effectiveOrder.customer.isNotEmpty ? effectiveOrder.customer : 'Customer'))
+                  : ((effectiveOrder != null && effectiveOrder.customer.isNotEmpty && effectiveOrder.customer != 'Customer')
+                      ? effectiveOrder.customer
+                      : (targetCustomerName ?? 'Customer')),
             ),
             if (effectiveOrder != null) _detailRow('Target Delivery:', effectiveOrder.orderNumber),
             const SizedBox(height: 12),
@@ -3735,48 +4092,77 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
     setState(() => _isSavingTransaction = true);
 
     try {
-      final toggleResult = await SupabaseService.executeGallonStatusToggle(
-        gallonId: gallonId,
-        gallonCode: gallonCode,
-        currentStatus: currentStatus,
-        customerId: targetCustomerId,
-        customerName: targetCustomerName,
-        orderId: effectiveOrder?.orderId,
-      );
-
-      // Save locally to ScannedItemsManager
-      await ScannedItemsManager.instance.saveScannedItem(
-        ScannedGallonItem(
-          id: gallonId,
-          gallonCode: gallonCode,
-          orderId: effectiveOrder?.orderId ?? '',
-          orderNumber: effectiveOrder?.orderNumber ?? 'General Scan',
-          scannedAt: DateTime.now(),
-          status: toggleResult['new_status'] ?? 'borrowed',
-          customerName: targetCustomerName ?? 'Customer',
-          deliveryAddress: effectiveOrder?.address ?? '',
-        ),
-      );
-
       if (effectiveOrder != null) {
         effectiveOrder.verifiedGallonIds.add(gallonId);
         effectiveOrder.verifiedGallonCodes.add(gallonCode);
-      }
 
-      setState(() {
-        _latestToggleResult = toggleResult;
-        _scanResultState = 'success';
-        _batchScannedList.insert(0, toggleResult);
-      });
+        final keys = [effectiveOrder.orderId, effectiveOrder.id, effectiveOrder.orderNumber].where((k) => k.isNotEmpty).toList();
+        for (var k in keys) {
+          await ScannedItemsManager.instance.saveScannedItem(
+            ScannedGallonItem(
+              id: gallonId,
+              gallonCode: gallonCode,
+              orderId: k,
+              orderNumber: effectiveOrder.orderNumber,
+              scannedAt: DateTime.now(),
+              status: 'verified',
+              customerName: targetCustomerName ?? effectiveOrder.customer,
+              deliveryAddress: effectiveOrder.address,
+            ),
+          );
+        }
 
-      if (mounted) {
-        DriverNotification.show(
-          context,
-          title: toggleResult['new_status'] == 'borrowed' ? 'BORROWED CONFIRMED' : 'RETURNED CONFIRMED',
-          message: toggleResult['display_message'] ?? '',
-          backgroundColor: AppColors.successGreen,
-          icon: Icons.check_circle_outline,
+        setState(() {
+          _scanResultState = 'success';
+        });
+
+        if (mounted) {
+          DriverNotification.show(
+            context,
+            title: 'GALLON VERIFIED ✓',
+            message: 'Gallon $gallonCode verified for Order #${effectiveOrder.orderNumber}.',
+            backgroundColor: AppColors.successGreen,
+            icon: Icons.check_circle_outline,
+          );
+        }
+      } else {
+        final toggleResult = await SupabaseService.executeGallonStatusToggle(
+          gallonId: gallonId,
+          gallonCode: gallonCode,
+          currentStatus: currentStatus,
+          customerId: targetCustomerId,
+          customerName: targetCustomerName,
+          orderId: null,
         );
+
+        await ScannedItemsManager.instance.saveScannedItem(
+          ScannedGallonItem(
+            id: gallonId,
+            gallonCode: gallonCode,
+            orderId: 'General Scan',
+            orderNumber: 'General Scan',
+            scannedAt: DateTime.now(),
+            status: toggleResult['new_status'] ?? 'borrowed',
+            customerName: targetCustomerName ?? 'Customer',
+            deliveryAddress: '',
+          ),
+        );
+
+        setState(() {
+          _latestToggleResult = toggleResult;
+          _scanResultState = 'success';
+          _batchScannedList.insert(0, toggleResult);
+        });
+
+        if (mounted) {
+          DriverNotification.show(
+            context,
+            title: toggleResult['new_status'] == 'borrowed' ? 'BORROWED CONFIRMED' : 'RETURNED CONFIRMED',
+            message: toggleResult['display_message'] ?? '',
+            backgroundColor: AppColors.successGreen,
+            icon: Icons.check_circle_outline,
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
@@ -4006,87 +4392,43 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
             // Visual Scan Frame with Corner Brackets
             _buildScanFrame(),
 
-            // Top Header Overlay with Order / Customer Selector and Scan Mode Banner
             Positioned(
               top: 16,
               left: 16,
               right: 16,
-              child: Column(
-                children: [
-                  ClipRRect(
+              child: ClipRRect(
+                borderRadius: BorderRadius.circular(16),
+                child: BackdropFilter(
+                  filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                  child: InkWell(
+                    onTap: _showOrderSelectionModal,
                     borderRadius: BorderRadius.circular(16),
-                    child: BackdropFilter(
-                      filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                        decoration: BoxDecoration(
-                          gradient: AppGradients.ocean,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: Colors.white.withValues(alpha: 0.25), width: 1),
-                        ),
-                        child: Column(
-                          children: [
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                              children: [
-                                Row(
-                                  children: [
-                                    const Icon(Icons.qr_code_scanner, color: Color(0xFF38BDF8), size: 18),
-                                    const SizedBox(width: 8),
-                                    Text(
-                                      _isBatchScanMode ? 'Batch Scanning Mode' : 'Single Scan Mode',
-                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-                                    ),
-                                  ],
-                                ),
-                                Container(
-                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                                  decoration: BoxDecoration(
-                                    color: _isBatchScanMode ? AppColors.successGreen : AppColors.mediumBlue,
-                                    borderRadius: BorderRadius.circular(6),
-                                  ),
-                                  child: Text(
-                                    _isBatchScanMode ? 'CONTINUOUS' : 'SINGLE',
-                                    style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900),
-                                  ),
-                                ),
-                              ],
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                      decoration: BoxDecoration(
+                        gradient: AppGradients.ocean,
+                        borderRadius: BorderRadius.circular(16),
+                        border: Border.all(color: Colors.white.withValues(alpha: 0.25), width: 1),
+                      ),
+                      child: Row(
+                        children: [
+                          const Icon(Icons.person_pin_circle_rounded, color: Color(0xFF7DD3FC), size: 18),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              activeOrder != null
+                                  ? 'Target Customer: ${activeOrder.customer} (${activeOrder.orderNumber})'
+                                  : 'No active delivery selected (Tap to choose customer)',
+                              overflow: TextOverflow.ellipsis,
+                              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
                             ),
-                            const SizedBox(height: 8),
-                            InkWell(
-                              onTap: _showOrderSelectionModal,
-                              borderRadius: BorderRadius.circular(10),
-                              child: Container(
-                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
-                                decoration: BoxDecoration(
-                                  color: AppColors.mediumBlue.withValues(alpha: 0.35),
-                                  borderRadius: BorderRadius.circular(10),
-                                  border: Border.all(color: AppColors.mediumBlue.withValues(alpha: 0.6)),
-                                ),
-                                child: Row(
-                                  children: [
-                                    const Icon(Icons.person_pin_circle_rounded, color: Color(0xFF7DD3FC), size: 16),
-                                    const SizedBox(width: 6),
-                                    Expanded(
-                                      child: Text(
-                                        activeOrder != null
-                                            ? 'Target Customer: ${activeOrder.customer} (${activeOrder.orderNumber})'
-                                            : 'No active delivery selected (Tap to choose customer)',
-                                        overflow: TextOverflow.ellipsis,
-                                        style: const TextStyle(color: Color(0xFF7DD3FC), fontSize: 11, fontWeight: FontWeight.bold),
-                                      ),
-                                    ),
-                                    const Icon(Icons.arrow_drop_down, color: Colors.white70, size: 18),
-                                  ],
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
+                          ),
+                          const Icon(Icons.arrow_drop_down, color: Colors.white70, size: 20),
+                        ],
                       ),
                     ),
                   ),
-                ],
+                ),
               ),
             ),
 
@@ -4243,10 +4585,12 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Row(
+                    Wrap(
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 6,
+                      runSpacing: 4,
                       children: [
                         Text('Gallon $gallonCode', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.darkText)),
-                        const SizedBox(width: 8),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
                           decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(6)),
@@ -4391,6 +4735,8 @@ class _CompletedDeliveriesScreenState extends State<CompletedDeliveriesScreen> {
   bool _isLoading = true;
   String _sortBy = 'newest'; // 'newest', 'oldest', 'highest_amount', 'lowest_amount'
   String _paymentFilter = 'ALL'; // 'ALL', 'COD', 'ONLINE'
+  String _dateFilter = 'today'; // 'today', 'week', 'month', 'all', 'custom'
+  DateTimeRange? _customDateRange;
 
   @override
   void initState() {
@@ -4458,7 +4804,11 @@ class _CompletedDeliveriesScreenState extends State<CompletedDeliveriesScreen> {
           location: LogisticsUtils.parseLocation(d, orderData, profilesData),
           deliveredAt: d['delivered_at'] != null 
               ? DateTime.tryParse(d['delivered_at'].toString()) 
-              : (orderData['delivered_at'] != null ? DateTime.tryParse(orderData['delivered_at'].toString()) : null),
+              : (orderData['delivered_at'] != null 
+                  ? DateTime.tryParse(orderData['delivered_at'].toString()) 
+                  : (d['updated_at'] != null 
+                      ? DateTime.tryParse(d['updated_at'].toString()) 
+                      : (orderData['updated_at'] != null ? DateTime.tryParse(orderData['updated_at'].toString()) : null))),
         );
       }).toList();
 
@@ -4473,12 +4823,103 @@ class _CompletedDeliveriesScreenState extends State<CompletedDeliveriesScreen> {
     }
   }
 
-  double get _totalEarnings => _completedDeliveries.fold(0, (sum, item) => sum + item.amount);
-  double get _codEarnings => _completedDeliveries.where((o) => o.payment == 'COD' || o.payment == 'CASH').fold(0, (sum, item) => sum + item.amount);
-  double get _onlineEarnings => _completedDeliveries.where((o) => o.payment != 'COD' && o.payment != 'CASH').fold(0, (sum, item) => sum + item.amount);
+  bool _isDeliveryInDateFilter(Order order) {
+    final date = order.deliveredAt;
+    if (date == null) {
+      return _dateFilter == 'all';
+    }
+
+    final now = DateTime.now();
+
+    switch (_dateFilter) {
+      case 'today':
+        return date.year == now.year && date.month == now.month && date.day == now.day;
+      case 'week':
+        final startOfWeek = DateTime(now.year, now.month, now.day).subtract(Duration(days: now.weekday - 1));
+        final endOfWeek = startOfWeek.add(const Duration(days: 7)).subtract(const Duration(milliseconds: 1));
+        return date.isAfter(startOfWeek.subtract(const Duration(seconds: 1))) && date.isBefore(endOfWeek.add(const Duration(seconds: 1)));
+      case 'month':
+        return date.year == now.year && date.month == now.month;
+      case 'custom':
+        if (_customDateRange == null) return true;
+        final start = DateTime(_customDateRange!.start.year, _customDateRange!.start.month, _customDateRange!.start.day, 0, 0, 0);
+        final end = DateTime(_customDateRange!.end.year, _customDateRange!.end.month, _customDateRange!.end.day, 23, 59, 59, 999);
+        return date.isAfter(start.subtract(const Duration(seconds: 1))) && date.isBefore(end.add(const Duration(seconds: 1)));
+      case 'all':
+      default:
+        return true;
+    }
+  }
+
+  List<Order> get _dateFilteredDeliveries {
+    return _completedDeliveries.where(_isDeliveryInDateFilter).toList();
+  }
+
+  double get _totalEarnings => _dateFilteredDeliveries.fold(0, (sum, item) => sum + item.amount);
+  double get _codEarnings => _dateFilteredDeliveries.where((o) => o.payment == 'COD' || o.payment == 'CASH').fold(0, (sum, item) => sum + item.amount);
+  double get _onlineEarnings => _dateFilteredDeliveries.where((o) => o.payment != 'COD' && o.payment != 'CASH').fold(0, (sum, item) => sum + item.amount);
+
+  String get _summaryTitle {
+    switch (_dateFilter) {
+      case 'today':
+        return 'DAILY EARNINGS SUMMARY';
+      case 'week':
+        return 'WEEKLY EARNINGS SUMMARY';
+      case 'month':
+        return 'MONTHLY EARNINGS SUMMARY';
+      case 'custom':
+        return 'CUSTOM EARNINGS SUMMARY';
+      case 'all':
+      default:
+        return 'TOTAL EARNINGS SUMMARY';
+    }
+  }
+
+  Future<void> _pickCustomDateRange() async {
+    final now = DateTime.now();
+    final initialRange = _customDateRange ?? DateTimeRange(
+      start: now.subtract(const Duration(days: 7)),
+      end: now,
+    );
+
+    final picked = await showDateRangePicker(
+      context: context,
+      firstDate: DateTime(2020),
+      lastDate: DateTime(now.year + 2),
+      initialDateRange: initialRange,
+      helpText: 'Select Date Range',
+      confirmText: 'SELECT',
+      cancelText: 'CANCEL',
+      builder: (context, child) {
+        return Theme(
+          data: Theme.of(context).copyWith(
+            colorScheme: const ColorScheme.light(
+              primary: AppColors.darkRoyalBlue,
+              onPrimary: Colors.white,
+              surface: Colors.white,
+              onSurface: AppColors.darkText,
+            ),
+            dialogTheme: const DialogThemeData(backgroundColor: Colors.white),
+          ),
+          child: child!,
+        );
+      },
+    );
+
+    if (picked != null) {
+      setState(() {
+        _customDateRange = picked;
+        _dateFilter = 'custom';
+      });
+    } else if (_customDateRange == null) {
+      setState(() {
+        _dateFilter = 'today';
+      });
+    }
+  }
 
   List<Order> get _filteredAndSortedDeliveries {
-    var list = _completedDeliveries.where((o) {
+    var list = _dateFilteredDeliveries.where((o) {
       if (_paymentFilter == 'COD') return o.payment == 'COD' || o.payment == 'CASH';
       if (_paymentFilter == 'ONLINE') return o.payment != 'COD' && o.payment != 'CASH';
       return true;
@@ -4505,6 +4946,96 @@ class _CompletedDeliveriesScreenState extends State<CompletedDeliveriesScreen> {
     return list;
   }
 
+  String _formatDeliveredAt(DateTime? dt) {
+    if (dt == null) return 'N/A';
+    final now = DateTime.now();
+    if (dt.year == now.year && dt.month == now.month && dt.day == now.day) {
+      return DateFormat('hh:mm a').format(dt);
+    } else if (dt.year == now.year) {
+      return DateFormat('MMM d, hh:mm a').format(dt);
+    } else {
+      return DateFormat('MMM d, yyyy, hh:mm a').format(dt);
+    }
+  }
+
+  Widget _buildDateFilterChip({
+    required String label,
+    required String value,
+    required IconData icon,
+    bool isCustom = false,
+  }) {
+    final isSelected = _dateFilter == value;
+
+    String displayLabel = label;
+    if (isCustom && _customDateRange != null) {
+      final startStr = DateFormat('MMM d').format(_customDateRange!.start);
+      final endStr = DateFormat('MMM d').format(_customDateRange!.end);
+      displayLabel = '$startStr - $endStr';
+    }
+
+    return GestureDetector(
+      onTap: () async {
+        if (isCustom) {
+          await _pickCustomDateRange();
+        } else {
+          setState(() {
+            _dateFilter = value;
+          });
+        }
+      },
+      child: AnimatedContainer(
+        duration: const Duration(milliseconds: 200),
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+        decoration: BoxDecoration(
+          color: isSelected ? AppColors.darkRoyalBlue : Colors.white,
+          borderRadius: BorderRadius.circular(20),
+          border: Border.all(
+            color: isSelected ? AppColors.darkRoyalBlue : AppColors.border,
+            width: 1.5,
+          ),
+          boxShadow: isSelected
+              ? [
+                  BoxShadow(
+                    color: AppColors.darkRoyalBlue.withValues(alpha: 0.25),
+                    blurRadius: 6,
+                    offset: const Offset(0, 3),
+                  )
+                ]
+              : [
+                  BoxShadow(
+                    color: Colors.black.withValues(alpha: 0.03),
+                    blurRadius: 4,
+                    offset: const Offset(0, 2),
+                  )
+                ],
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(
+              icon,
+              size: 15,
+              color: isSelected ? Colors.white : AppColors.darkRoyalBlue,
+            ),
+            const SizedBox(width: 6),
+            Text(
+              displayLabel,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: isSelected ? FontWeight.bold : FontWeight.w600,
+                color: isSelected ? Colors.white : AppColors.darkText,
+              ),
+            ),
+            if (isCustom && isSelected) ...[
+              const SizedBox(width: 4),
+              const Icon(Icons.edit_calendar_rounded, size: 14, color: Colors.white70),
+            ]
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final displayDeliveries = _filteredAndSortedDeliveries;
@@ -4526,200 +5057,259 @@ class _CompletedDeliveriesScreenState extends State<CompletedDeliveriesScreen> {
           child: CustomScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
             slivers: [
+              // DATE PERIOD FILTER CHIPS
               SliverToBoxAdapter(
                 child: Padding(
-                  padding: const EdgeInsets.all(20.0),
+                  padding: const EdgeInsets.only(top: 14.0, left: 20.0, right: 20.0, bottom: 4.0),
+                  child: SingleChildScrollView(
+                    scrollDirection: Axis.horizontal,
+                    physics: const BouncingScrollPhysics(),
+                    child: Row(
+                      children: [
+                        _buildDateFilterChip(
+                          label: 'Per Day',
+                          value: 'today',
+                          icon: Icons.today_rounded,
+                        ),
+                        const SizedBox(width: 8),
+                        _buildDateFilterChip(
+                          label: 'Per Week',
+                          value: 'week',
+                          icon: Icons.date_range_rounded,
+                        ),
+                        const SizedBox(width: 8),
+                        _buildDateFilterChip(
+                          label: 'Per Month',
+                          value: 'month',
+                          icon: Icons.calendar_month_rounded,
+                        ),
+                        const SizedBox(width: 8),
+                        _buildDateFilterChip(
+                          label: 'All Time',
+                          value: 'all',
+                          icon: Icons.all_inclusive_rounded,
+                        ),
+                        const SizedBox(width: 8),
+                        _buildDateFilterChip(
+                          label: 'Custom',
+                          value: 'custom',
+                          icon: Icons.calendar_today_rounded,
+                          isCustom: true,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+              // SUMMARY CARD
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 8.0),
                   child: Container(
                     padding: const EdgeInsets.all(20),
                     decoration: BoxDecoration(
                       gradient: AppGradients.mediumBluePanel, // Secondary panel
                       borderRadius: BorderRadius.circular(24),
                       boxShadow: [
-                      BoxShadow(
-                        color: AppColors.darkRoyalBlue.withValues(alpha: 0.3),
-                        blurRadius: 15,
-                        offset: const Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: Column(
-                    children: [
-                      const Text(
-                        'DAILY EARNINGS SUMMARY',
-                        style: TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.2),
-                      ),
-                      const SizedBox(height: 8),
-                      Text(
-                        '₱${NumberFormat("#,##0.00").format(_totalEarnings)}',
-                        style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w900),
-                      ),
-                      const SizedBox(height: 20),
-                      Row(
-                        children: [
-                          Expanded(child: _earningsStat('COD (CASH)', _codEarnings, AppColors.dominantLightBlue)),
-                          Container(width: 1, height: 30, color: Colors.white24),
-                          Expanded(child: _earningsStat('ONLINE', _onlineEarnings, AppColors.successGreen)),
+                        BoxShadow(
+                          color: AppColors.darkRoyalBlue.withValues(alpha: 0.3),
+                          blurRadius: 15,
+                          offset: const Offset(0, 8),
+                        ),
+                      ],
+                    ),
+                    child: Column(
+                      children: [
+                        Text(
+                          _summaryTitle,
+                          style: const TextStyle(color: Colors.white70, fontSize: 11, fontWeight: FontWeight.bold, letterSpacing: 1.2),
+                        ),
+                        if (_dateFilter == 'custom' && _customDateRange != null) ...[
+                          const SizedBox(height: 4),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 3),
+                            decoration: BoxDecoration(
+                              color: Colors.white.withValues(alpha: 0.15),
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            child: Text(
+                              '${DateFormat('MMM d, yyyy').format(_customDateRange!.start)} - ${DateFormat('MMM d, yyyy').format(_customDateRange!.end)}',
+                              style: const TextStyle(color: Colors.white, fontSize: 11, fontWeight: FontWeight.w600),
+                            ),
+                          ),
                         ],
-                      ),
-                    ],
+                        const SizedBox(height: 8),
+                        Text(
+                          '₱${NumberFormat("#,##0.00").format(_totalEarnings)}',
+                          style: const TextStyle(color: Colors.white, fontSize: 32, fontWeight: FontWeight.w900),
+                        ),
+                        const SizedBox(height: 20),
+                        Row(
+                          children: [
+                            Expanded(child: _earningsStat('COD (CASH)', _codEarnings, AppColors.dominantLightBlue)),
+                            Container(width: 1, height: 30, color: Colors.white24),
+                            Expanded(child: _earningsStat('ONLINE', _onlineEarnings, AppColors.successGreen)),
+                          ],
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
-            ),
-            // SORT & PAYMENT FILTER DROPDOWN BUTTONS BAR
-            SliverToBoxAdapter(
-              child: Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 4.0),
-                child: Row(
-                  children: [
-                    // Sort Dropdown Button
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: AppColors.border),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.03),
-                              blurRadius: 4,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.sort_rounded, size: 18, color: AppColors.darkRoyalBlue),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: DropdownButtonHideUnderline(
-                                child: DropdownButton<String>(
-                                  value: _sortBy,
-                                  isDense: true,
-                                  isExpanded: true,
-                                  icon: const Icon(Icons.arrow_drop_down_rounded, color: AppColors.darkRoyalBlue),
-                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.darkText),
-                                  items: const [
-                                    DropdownMenuItem(value: 'newest', child: Text('Newest First')),
-                                    DropdownMenuItem(value: 'oldest', child: Text('Oldest First')),
-                                    DropdownMenuItem(value: 'highest_amount', child: Text('Highest Amount')),
-                                    DropdownMenuItem(value: 'lowest_amount', child: Text('Lowest Amount')),
-                                  ],
-                                  onChanged: (val) {
-                                    if (val != null) setState(() => _sortBy = val);
-                                  },
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                    const SizedBox(width: 12),
-                    // Payment Filter Dropdown Button
-                    Expanded(
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
-                        decoration: BoxDecoration(
-                          color: Colors.white,
-                          borderRadius: BorderRadius.circular(16),
-                          border: Border.all(color: AppColors.border),
-                          boxShadow: [
-                            BoxShadow(
-                              color: Colors.black.withValues(alpha: 0.03),
-                              blurRadius: 4,
-                              offset: const Offset(0, 2),
-                            ),
-                          ],
-                        ),
-                        child: Row(
-                          children: [
-                            const Icon(Icons.filter_list_rounded, size: 18, color: AppColors.darkRoyalBlue),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: DropdownButtonHideUnderline(
-                                child: DropdownButton<String>(
-                                  value: _paymentFilter,
-                                  isDense: true,
-                                  isExpanded: true,
-                                  icon: const Icon(Icons.arrow_drop_down_rounded, color: AppColors.darkRoyalBlue),
-                                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.darkText),
-                                  items: const [
-                                    DropdownMenuItem(value: 'ALL', child: Text('All Payments')),
-                                    DropdownMenuItem(value: 'COD', child: Text('COD Only')),
-                                    DropdownMenuItem(value: 'ONLINE', child: Text('Online Only')),
-                                  ],
-                                  onChanged: (val) {
-                                    if (val != null) setState(() => _paymentFilter = val);
-                                  },
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            const SliverToBoxAdapter(child: SizedBox(height: 12)),
-            if (_isLoading)
-              const SliverFillRemaining(child: Center(child: CircularProgressIndicator()))
-            else if (_completedDeliveries.isEmpty)
-              SliverFillRemaining(
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
+              // SORT & PAYMENT FILTER DROPDOWN BUTTONS BAR
+              SliverToBoxAdapter(
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20.0, vertical: 4.0),
+                  child: Row(
                     children: [
-                      Icon(Icons.inbox_outlined, size: 56, color: AppColors.grayText.withValues(alpha: 0.4)),
-                      const SizedBox(height: 12),
-                      const Text(
-                        'No completed deliveries yet',
-                        style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.slateText),
+                      // Sort Dropdown Button
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: AppColors.border),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.03),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.sort_rounded, size: 18, color: AppColors.darkRoyalBlue),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: DropdownButtonHideUnderline(
+                                  child: DropdownButton<String>(
+                                    value: _sortBy,
+                                    isDense: true,
+                                    isExpanded: true,
+                                    icon: const Icon(Icons.arrow_drop_down_rounded, color: AppColors.darkRoyalBlue),
+                                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.darkText),
+                                    items: const [
+                                      DropdownMenuItem(value: 'newest', child: Text('Newest First')),
+                                      DropdownMenuItem(value: 'oldest', child: Text('Oldest First')),
+                                      DropdownMenuItem(value: 'highest_amount', child: Text('Highest Amount')),
+                                      DropdownMenuItem(value: 'lowest_amount', child: Text('Lowest Amount')),
+                                    ],
+                                    onChanged: (val) {
+                                      if (val != null) setState(() => _sortBy = val);
+                                    },
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 12),
+                      // Payment Filter Dropdown Button
+                      Expanded(
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+                          decoration: BoxDecoration(
+                            color: Colors.white,
+                            borderRadius: BorderRadius.circular(16),
+                            border: Border.all(color: AppColors.border),
+                            boxShadow: [
+                              BoxShadow(
+                                color: Colors.black.withValues(alpha: 0.03),
+                                blurRadius: 4,
+                                offset: const Offset(0, 2),
+                              ),
+                            ],
+                          ),
+                          child: Row(
+                            children: [
+                              const Icon(Icons.filter_list_rounded, size: 18, color: AppColors.darkRoyalBlue),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: DropdownButtonHideUnderline(
+                                  child: DropdownButton<String>(
+                                    value: _paymentFilter,
+                                    isDense: true,
+                                    isExpanded: true,
+                                    icon: const Icon(Icons.arrow_drop_down_rounded, color: AppColors.darkRoyalBlue),
+                                    style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.darkText),
+                                    items: const [
+                                      DropdownMenuItem(value: 'ALL', child: Text('All Payments')),
+                                      DropdownMenuItem(value: 'COD', child: Text('COD Only')),
+                                      DropdownMenuItem(value: 'ONLINE', child: Text('Online Only')),
+                                    ],
+                                    onChanged: (val) {
+                                      if (val != null) setState(() => _paymentFilter = val);
+                                    },
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
                       ),
                     ],
                   ),
                 ),
-              )
-            else if (displayDeliveries.isEmpty)
-              const SliverFillRemaining(
-                child: Center(
-                  child: Text(
-                    'No deliveries match the selected filter',
-                    style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.slateText),
+              ),
+              const SliverToBoxAdapter(child: SizedBox(height: 12)),
+              if (_isLoading)
+                const SliverFillRemaining(child: Center(child: CircularProgressIndicator()))
+              else if (_completedDeliveries.isEmpty)
+                SliverFillRemaining(
+                  child: Center(
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(Icons.inbox_outlined, size: 56, color: AppColors.grayText.withValues(alpha: 0.4)),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'No completed deliveries yet',
+                          style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.slateText),
+                        ),
+                      ],
+                    ),
                   ),
-                ),
-              )
-            else
-              SliverPadding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
-                sliver: SliverList(
-                  delegate: SliverChildBuilderDelegate(
-                    (context, index) {
-                      final order = displayDeliveries[index];
-                      return Padding(
-                        padding: const EdgeInsets.only(bottom: 14.0),
-                        child: GlassCard(
-                          padding: const EdgeInsets.all(16),
-                          borderRadius: 16,
-                          child: Column(
-                            crossAxisAlignment: CrossAxisAlignment.start,
-                            children: [
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                                children: [
-                                  Text(
-                                    order.orderNumber,
-                                    style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.navy),
-                                  ),
-                                  Text(
-                                    order.deliveredAt != null ? DateFormat('hh:mm a').format(order.deliveredAt!) : 'N/A',
-                                    style: const TextStyle(fontSize: 11, color: AppColors.grayText),
-                                  ),
-                                ],
-                              ),
+                )
+              else if (displayDeliveries.isEmpty)
+                const SliverFillRemaining(
+                  child: Center(
+                    child: Text(
+                      'No deliveries match the selected filter',
+                      style: TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.slateText),
+                    ),
+                  ),
+                )
+              else
+                SliverPadding(
+                  padding: const EdgeInsets.symmetric(horizontal: 20),
+                  sliver: SliverList(
+                    delegate: SliverChildBuilderDelegate(
+                      (context, index) {
+                        final order = displayDeliveries[index];
+                        return Padding(
+                          padding: const EdgeInsets.only(bottom: 14.0),
+                          child: GlassCard(
+                            padding: const EdgeInsets.all(16),
+                            borderRadius: 16,
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  children: [
+                                    Text(
+                                      order.orderNumber,
+                                      style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.navy),
+                                    ),
+                                    Text(
+                                      _formatDeliveredAt(order.deliveredAt),
+                                      style: const TextStyle(fontSize: 11, color: AppColors.grayText),
+                                    ),
+                                  ],
+                                ),
                               const SizedBox(height: 8),
                               Text(
                                 order.customer,
@@ -5043,7 +5633,7 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
     final role = profileData['role']?.toString().replaceAll('_', ' ').toUpperCase() ?? 'DRIVER';
     final status = profileData['status']?.toString().replaceAll('_', ' ').toUpperCase() ?? 'ACTIVE';
     final vehicleNum = profileData['vehicle_number']?.toString() ?? profileData['plate_number']?.toString() ?? 'N/A';
-    final stationName = profileData['station_name']?.toString() ?? 'N/A';
+    final stationInfo = StationInfo.fromMap(widget.profileData);
 
     return Scaffold(
       backgroundColor: AppColors.scaffold,
@@ -5104,9 +5694,17 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                     const Divider(height: 20),
                     _infoRow(Icons.directions_car_outlined, 'Vehicle / Plate', vehicleNum),
                     const Divider(height: 20),
-                    _infoRow(Icons.store_outlined, 'Station', stationName),
+                    _infoRow(Icons.store_outlined, 'Water Station', stationInfo.name),
+                    if (stationInfo.address != null && stationInfo.address!.isNotEmpty) ...[
+                      const Divider(height: 20),
+                      _infoRow(Icons.storefront_outlined, 'Station Address', stationInfo.address!),
+                    ],
+                    if (stationInfo.radiusKm != null) ...[
+                      const Divider(height: 20),
+                      _infoRow(Icons.radar_rounded, 'Geofence Radius', '${stationInfo.radiusKm!.toStringAsFixed(1)} km'),
+                    ],
                     const Divider(height: 20),
-                    _infoRow(Icons.location_on_outlined, 'Address', address),
+                    _infoRow(Icons.location_on_outlined, 'Driver Address', address),
                   ],
                 ),
               ),
@@ -5205,10 +5803,15 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                       color: AppColors.mediumBlue,
                       onTap: () {
                         final pos = widget.currentPosition;
+                        final stationInfo = StationInfo.fromMap(widget.profileData);
                         InAppMapWidget.showDriverLiveMapModal(
                           context,
                           location: pos != null ? LatLng(pos.latitude, pos.longitude) : null,
                           driverName: widget.driverName,
+                          stationName: stationInfo.name,
+                          stationAddress: stationInfo.address,
+                          stationLocation: stationInfo.location,
+                          geofenceRadiusKm: stationInfo.radiusKm,
                         );
                       },
                     ),
@@ -5234,7 +5837,8 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                   );
                 },
                 icon: Icons.logout_rounded,
-                color: AppColors.errorRed,
+                color: AppColors.errorRed.withValues(alpha: 0.1),
+                textColor: AppColors.errorRed,
               ),
               const SizedBox(height: 40),
             ],
@@ -5664,20 +6268,95 @@ class TaskActionPage extends StatefulWidget {
 
 class _TaskActionPageState extends State<TaskActionPage> {
   bool _isUpdating = false;
+  bool _gallonsCommitted = false;
   final SignatureController _sigController = SignatureController(penStrokeWidth: 3, penColor: Colors.black);
   Timer? _timer;
   Duration _elapsed = Duration.zero;
   Position? _driverPos;
   Uint8List? _cachedSignatureBytes;
+  StationInfo? _stationInfo;
+  RealtimeChannel? _stationChannel;
+
+  Future<void> _commitGallonBorrowing() async {
+    if (_gallonsCommitted) return;
+
+    final keys = [widget.order.orderId, widget.order.id, widget.order.orderNumber].where((k) => k.isNotEmpty).toList();
+    List<ScannedGallonItem> scannedItems = [];
+    for (var k in keys) {
+      final items = ScannedItemsManager.instance.getScannedForOrder(k);
+      if (items.isNotEmpty) {
+        scannedItems = items;
+        break;
+      }
+    }
+
+    final idSet = <String>{...widget.order.verifiedGallonIds};
+    for (var item in scannedItems) {
+      if (item.id.isNotEmpty) idSet.add(item.id);
+    }
+
+    if (idSet.isEmpty) return;
+
+    final targetCustId = widget.order.customerId.isNotEmpty ? widget.order.customerId : null;
+    final targetCustName = widget.order.customer.isNotEmpty ? widget.order.customer : 'Customer';
+    final targetOrdId = widget.order.orderId.isNotEmpty ? widget.order.orderId : widget.order.orderNumber;
+
+    for (var gId in idSet) {
+      String gCode = gId;
+      for (var item in scannedItems) {
+        if (item.id == gId || item.gallonCode == gId) {
+          if (item.gallonCode.isNotEmpty) gCode = item.gallonCode;
+          break;
+        }
+      }
+
+      await SupabaseService.executeGallonStatusToggle(
+        gallonId: gId,
+        gallonCode: gCode,
+        currentStatus: 'available',
+        customerId: targetCustId,
+        customerName: targetCustName,
+        orderId: targetOrdId,
+      );
+    }
+
+    _gallonsCommitted = true;
+  }
 
   @override
   void initState() {
     super.initState();
     _fetchDriverLocation();
+    _initStationData();
     if (widget.order.status == 'out_for_delivery' && widget.order.startedAt != null) {
       _startTimer();
     }
     _loadPersistedScans();
+  }
+
+  Future<void> _initStationData() async {
+    try {
+      final data = await SupabaseService.fetchStationLocation();
+      if (data != null && mounted) {
+        setState(() {
+          _stationInfo = StationInfo.fromMap(data);
+        });
+      }
+    } catch (e) {
+      debugPrint('Error fetching station in TaskActionPage: $e');
+    }
+
+    try {
+      _stationChannel = SupabaseService.subscribeToStationLocation((updated) {
+        if (mounted) {
+          setState(() {
+            _stationInfo = StationInfo.fromMap(updated);
+          });
+        }
+      });
+    } catch (e) {
+      debugPrint('Error subscribing to station in TaskActionPage: $e');
+    }
   }
 
   Future<void> _loadPersistedScans() async {
@@ -5748,6 +6427,9 @@ class _TaskActionPageState extends State<TaskActionPage> {
   void dispose() {
     _timer?.cancel();
     _sigController.dispose();
+    if (_stationChannel != null) {
+      SupabaseService.removeChannel(_stationChannel!);
+    }
     super.dispose();
   }
 
@@ -5898,6 +6580,12 @@ class _TaskActionPageState extends State<TaskActionPage> {
       if (widget.order.scannedGallons < widget.order.totalGallons) {
         _showWarning('Verify all gallons first.');
         return;
+      }
+
+      try {
+        await _commitGallonBorrowing();
+      } catch (e) {
+        debugPrint('Error committing gallon borrowing on completion: $e');
       }
 
       if (widget.order.podImageBytes == null) {
@@ -6149,6 +6837,10 @@ class _TaskActionPageState extends State<TaskActionPage> {
               destinationAddress: widget.order.address,
               customerName: widget.order.customer,
               orderNumber: widget.order.orderNumber,
+              stationName: _stationInfo?.name,
+              stationAddress: _stationInfo?.address,
+              stationLocation: _stationInfo?.location,
+              geofenceRadiusKm: _stationInfo?.radiusKm,
             ),
           ),
         ],
@@ -6189,7 +6881,6 @@ class _TaskActionPageState extends State<TaskActionPage> {
 
   Widget _verificationCard() {
     final verified = widget.order.scannedGallons >= widget.order.totalGallons;
-    final hasScans = widget.order.scannedGallons > 0 || widget.order.verifiedGallonCodes.isNotEmpty;
 
     return GlassCard(
       padding: const EdgeInsets.all(20),
@@ -6200,34 +6891,7 @@ class _TaskActionPageState extends State<TaskActionPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              Row(
-                children: [
-                  const Text('SCAN VERIFICATION', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.grayText)),
-                  if (hasScans) ...[
-                    const SizedBox(width: 8),
-                    InkWell(
-                      onTap: _showScannedGallonsInfoDialog,
-                      borderRadius: BorderRadius.circular(12),
-                      child: Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
-                        decoration: BoxDecoration(
-                          color: AppColors.primary.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(12),
-                          border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
-                        ),
-                        child: const Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Icon(Icons.info_outline_rounded, size: 13, color: AppColors.primary),
-                            SizedBox(width: 3),
-                            Text('INFO', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.primary)),
-                          ],
-                        ),
-                      ),
-                    ),
-                  ],
-                ],
-              ),
+              const Text('SCAN VERIFICATION', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.grayText)),
               Text('${widget.order.scannedGallons}/${widget.order.totalGallons}', style: TextStyle(fontWeight: FontWeight.bold, color: verified ? AppColors.successGreen : AppColors.primary)),
             ],
           ),
@@ -6263,13 +6927,7 @@ class _TaskActionPageState extends State<TaskActionPage> {
               onTap: _isUpdating ? null : () async {
                 setState(() => _isUpdating = true);
                 try {
-                  for (var gId in widget.order.verifiedGallonIds) {
-                    await SupabaseService.driverGallonAction(
-                      gallonId: gId,
-                      orderId: widget.order.orderId,
-                      action: 'borrow',
-                    );
-                  }
+                  await _commitGallonBorrowing();
                   if (mounted) {
                     DriverNotification.show(
                       context,
@@ -6687,6 +7345,167 @@ class _TaskActionPageState extends State<TaskActionPage> {
     );
   }
 
+  Widget _detailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8.0),
+      child: Row(
+        children: [
+          Text(label, style: const TextStyle(fontSize: 12, color: AppColors.grayText, fontWeight: FontWeight.bold)),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(fontSize: 13, color: AppColors.darkText, fontWeight: FontWeight.w900),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showToggleConfirmationDialog({
+    required Map<String, dynamic> gallonRecord,
+  }) {
+    final gallonCode = gallonRecord['gallon_code']?.toString() ?? 'N/A';
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        backgroundColor: Colors.white,
+        title: const Row(
+          children: [
+            Icon(
+              Icons.qr_code_scanner_rounded,
+              color: AppColors.primary,
+              size: 26,
+            ),
+            SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                'Verify Container for Delivery',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.darkText),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0F9FF),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.verified_rounded, color: AppColors.primary, size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('ORDER SCAN VERIFICATION', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.grayText)),
+                        const SizedBox(height: 2),
+                        Text('Gallon: $gallonCode', style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.darkText)),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 16),
+            _detailRow('Gallon Code:', gallonCode),
+            _detailRow('Assigned Customer:', widget.order.customer),
+            _detailRow('Target Delivery:', widget.order.orderNumber),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.lightBg,
+                borderRadius: BorderRadius.circular(12),
+              ),
+              child: const Text(
+                'Notes: Container verified for delivery. Borrowing status will be updated in database upon order completion.',
+                style: TextStyle(fontSize: 11, color: AppColors.slateText, fontStyle: FontStyle.italic),
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('CANCEL', style: TextStyle(color: AppColors.grayText, fontWeight: FontWeight.bold)),
+          ),
+          ElevatedButton.icon(
+            onPressed: () async {
+              Navigator.pop(context);
+              await _executeToggleForRecord(gallonRecord: gallonRecord);
+            },
+            icon: const Icon(Icons.check_circle_rounded, size: 18),
+            label: const Text('VERIFY GALLON'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _executeToggleForRecord({required Map<String, dynamic> gallonRecord}) async {
+    final gallonId = gallonRecord['id']?.toString() ?? '';
+    final gallonCode = gallonRecord['gallon_code']?.toString() ?? '';
+    final idToAdd = gallonId.isNotEmpty ? gallonId : gallonCode;
+
+    if (idToAdd.isEmpty) return;
+
+    setState(() => _isUpdating = true);
+
+    try {
+      setState(() {
+        widget.order.verifiedGallonIds.add(idToAdd);
+        widget.order.verifiedGallonCodes.add(gallonCode);
+      });
+
+      final keys = [widget.order.orderId, widget.order.id, widget.order.orderNumber].where((k) => k.isNotEmpty).toList();
+      for (var k in keys) {
+        await ScannedItemsManager.instance.saveScannedItem(
+          ScannedGallonItem(
+            id: idToAdd,
+            gallonCode: gallonCode,
+            orderId: k,
+            orderNumber: widget.order.orderNumber,
+            scannedAt: DateTime.now(),
+            status: 'verified',
+            customerName: widget.order.customer,
+            deliveryAddress: widget.order.address,
+          ),
+        );
+      }
+
+      if (mounted) {
+        DriverNotification.show(
+          context,
+          title: 'GALLON VERIFIED ✓',
+          message: 'Gallon $gallonCode verified for this order.',
+          backgroundColor: AppColors.successGreen,
+          icon: Icons.check_circle_outline,
+        );
+      }
+    } catch (e) {
+      _showWarning('Error scanning gallon: $e');
+    } finally {
+      if (mounted) setState(() => _isUpdating = false);
+    }
+  }
+
   Future<void> _processScannedCode(String rawCode) async {
     setState(() => _isUpdating = true);
     try {
@@ -6694,50 +7513,11 @@ class _TaskActionPageState extends State<TaskActionPage> {
       if (gallonRecord != null) {
         final gallonId = gallonRecord['id']?.toString() ?? '';
         final gallonCode = gallonRecord['gallon_code']?.toString() ?? rawCode;
-        final currentStatus = gallonRecord['status']?.toString() ?? 'available';
 
         if (widget.order.verifiedGallonIds.contains(gallonId) || widget.order.verifiedGallonCodes.contains(gallonCode)) {
           _showWarning('Gallon $gallonCode already scanned for this order.');
         } else {
-          final toggleResult = await SupabaseService.executeGallonStatusToggle(
-            gallonId: gallonId,
-            gallonCode: gallonCode,
-            currentStatus: currentStatus,
-            customerId: widget.order.customerId,
-            customerName: widget.order.customer,
-            orderId: widget.order.orderId,
-          );
-
-          setState(() {
-            widget.order.verifiedGallonIds.add(gallonId.isNotEmpty ? gallonId : gallonCode);
-            widget.order.verifiedGallonCodes.add(gallonCode);
-          });
-
-          final keys = [widget.order.orderId, widget.order.id, widget.order.orderNumber].where((k) => k.isNotEmpty).toList();
-          for (var k in keys) {
-            await ScannedItemsManager.instance.saveScannedItem(
-              ScannedGallonItem(
-                id: gallonId.isNotEmpty ? gallonId : gallonCode,
-                gallonCode: gallonCode,
-                orderId: k,
-                orderNumber: widget.order.orderNumber,
-                scannedAt: DateTime.now(),
-                status: toggleResult['new_status'] ?? 'borrowed',
-                customerName: widget.order.customer,
-                deliveryAddress: widget.order.address,
-              ),
-            );
-          }
-
-          if (mounted) {
-            DriverNotification.show(
-              context,
-              title: toggleResult['new_status'] == 'borrowed' ? 'BORROWED & VERIFIED' : 'RETURNED',
-              message: toggleResult['display_message'] ?? 'Gallon $gallonCode verified ✓',
-              backgroundColor: AppColors.successGreen,
-              icon: Icons.check_circle_outline,
-            );
-          }
+          _showToggleConfirmationDialog(gallonRecord: gallonRecord);
         }
       } else {
         _showWarning('Unregistered Gallon QR Code ($rawCode)');

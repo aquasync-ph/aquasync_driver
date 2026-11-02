@@ -37,6 +37,7 @@ class InAppMapWidget extends StatefulWidget {
   final String? stationName;
   final String? stationAddress;
   final LatLng? stationLocation;
+  final double? geofenceRadiusKm;
   final List<DeliveryMapPoint> multiDeliveryPoints;
   final bool showControls;
   final bool isInteractive;
@@ -54,6 +55,7 @@ class InAppMapWidget extends StatefulWidget {
     this.stationName,
     this.stationAddress,
     this.stationLocation,
+    this.geofenceRadiusKm,
     this.multiDeliveryPoints = const [],
     this.showControls = true,
     this.isInteractive = true,
@@ -68,6 +70,7 @@ class InAppMapWidget extends StatefulWidget {
     String? stationName,
     String? stationAddress,
     LatLng? stationLocation,
+    double? geofenceRadiusKm,
     List<DeliveryMapPoint> multiDeliveryPoints = const [],
   }) {
     showModalBottomSheet(
@@ -76,20 +79,27 @@ class InAppMapWidget extends StatefulWidget {
       backgroundColor: Colors.transparent,
       builder: (context) {
         return Container(
-          height: MediaQuery.of(context).size.height * 0.82,
+          height: MediaQuery.of(context).size.height * 0.85,
           decoration: const BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            boxShadow: [
+              BoxShadow(
+                color: Colors.black26,
+                blurRadius: 20,
+                offset: Offset(0, -4),
+              ),
+            ],
           ),
           child: Column(
             children: [
               const SizedBox(height: 12),
               Container(
-                width: 40,
-                height: 4,
+                width: 44,
+                height: 5,
                 decoration: BoxDecoration(
                   color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
+                  borderRadius: BorderRadius.circular(3),
                 ),
               ),
               const SizedBox(height: 12),
@@ -98,42 +108,51 @@ class InAppMapWidget extends StatefulWidget {
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          driverName != null && driverName.isNotEmpty
-                              ? "$driverName's Live Location"
-                              : 'Your Real-time GPS Location',
-                          style: const TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.bold,
-                            color: AppColors.midnightBlue,
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            driverName != null && driverName.isNotEmpty
+                                ? "$driverName's Live Map & Route"
+                                : 'Live Driver Route Map',
+                            style: const TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                              color: AppColors.midnightBlue,
+                            ),
                           ),
-                        ),
-                        const Text(
-                          'Synced in real-time with Admin & Customer',
-                          style: TextStyle(fontSize: 11, color: AppColors.grayText),
-                        ),
-                      ],
+                          const SizedBox(height: 2),
+                          Text(
+                            stationName != null && stationName.isNotEmpty
+                                ? 'Hub: $stationName • Real-time GPS Navigation'
+                                : 'Real-time GPS dispatch & delivery navigation',
+                            style: const TextStyle(fontSize: 11, color: AppColors.grayText, fontWeight: FontWeight.w500),
+                            maxLines: 1,
+                            overflow: TextOverflow.ellipsis,
+                          ),
+                        ],
+                      ),
                     ),
+                    const SizedBox(width: 8),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                       decoration: BoxDecoration(
                         color: AppColors.successBg,
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(14),
                         border: Border.all(color: AppColors.successBorder),
                       ),
                       child: const Row(
                         children: [
                           Icon(Icons.circle, color: AppColors.successGreen, size: 8),
-                          SizedBox(width: 4),
+                          SizedBox(width: 5),
                           Text(
-                            'LIVE GPS',
+                            'GPS LIVE',
                             style: TextStyle(
                               fontSize: 10,
                               fontWeight: FontWeight.bold,
                               color: AppColors.successGreen,
+                              letterSpacing: 0.5,
                             ),
                           ),
                         ],
@@ -142,16 +161,17 @@ class InAppMapWidget extends StatefulWidget {
                   ],
                 ),
               ),
-              const SizedBox(height: 12),
+              const SizedBox(height: 14),
               Expanded(
                 child: ClipRRect(
-                  borderRadius: const BorderRadius.vertical(bottom: Radius.circular(24)),
+                  borderRadius: const BorderRadius.vertical(bottom: Radius.circular(28)),
                   child: InAppMapWidget(
                     driverLocation: location,
                     driverName: driverName,
                     stationName: stationName,
                     stationAddress: stationAddress,
                     stationLocation: stationLocation,
+                    geofenceRadiusKm: geofenceRadiusKm,
                     multiDeliveryPoints: multiDeliveryPoints,
                     showControls: true,
                     isInteractive: true,
@@ -178,9 +198,10 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
   List<LatLng> _osrmRoutePoints = [];
   StreamSubscription<Position>? _positionSubscription;
   double _calculatedDistanceKm = 0.0;
+  double _calculatedDistanceToShopKm = 0.0;
   bool _isLoadingLocation = true;
 
-  // Default fallback center (Victoria, Calabarzon / Laguna region)
+  // Default fallback station center (Victoria, Laguna / AquaSync Water Refilling Station region)
   static const LatLng _defaultCenter = LatLng(14.2272, 121.3283);
 
   @override
@@ -188,8 +209,10 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
     super.initState();
     _currentDriverPos = widget.driverLocation;
     _resolvedMultiPoints = List.from(widget.multiDeliveryPoints);
-    _resolvedStationLocation = widget.stationLocation;
+    _resolvedStationLocation = widget.stationLocation ?? _defaultCenter;
+
     _geocodeMultiDeliveryPoints();
+
     if (widget.destinationLocation != null) {
       final isStation = _resolvedStationLocation != null &&
           (widget.destinationLocation!.latitude - _resolvedStationLocation!.latitude).abs() < 0.0001 &&
@@ -202,21 +225,48 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
     } else {
       _resolveDestinationFromAddress(widget.destinationAddress);
     }
-    if (_resolvedStationLocation == null && widget.stationAddress != null) {
+
+    if (widget.stationLocation == null && widget.stationAddress != null && widget.stationAddress!.isNotEmpty) {
       _resolveStationFromAddress(widget.stationAddress);
     }
+
     _initLiveLocation();
     _updateOsrmRoutes();
   }
 
   Future<void> _updateOsrmRoutes() async {
-    final start = _currentDriverPos ?? _resolvedStationLocation;
-    final end = _resolvedDestination ?? (_resolvedMultiPoints.isNotEmpty ? _resolvedMultiPoints.first.location : null);
-    if (start == null || end == null) return;
+    final List<LatLng> waypoints = [];
+
+    // Order of route: Driver -> Store/Station -> Destination / Multi-points
+    if (_currentDriverPos != null) {
+      waypoints.add(_currentDriverPos!);
+    }
+    if (_resolvedStationLocation != null) {
+      if (waypoints.isEmpty ||
+          (waypoints.first.latitude - _resolvedStationLocation!.latitude).abs() > 0.0001 ||
+          (waypoints.first.longitude - _resolvedStationLocation!.longitude).abs() > 0.0001) {
+        waypoints.add(_resolvedStationLocation!);
+      }
+    }
+    if (_resolvedDestination != null) {
+      waypoints.add(_resolvedDestination!);
+    } else if (_resolvedMultiPoints.isNotEmpty) {
+      for (var pt in _resolvedMultiPoints) {
+        if ((pt.location.latitude - _defaultCenter.latitude).abs() > 0.0001) {
+          waypoints.add(pt.location);
+        }
+      }
+    }
+
+    if (waypoints.length < 2) {
+      if (mounted) setState(() => _osrmRoutePoints = []);
+      return;
+    }
 
     try {
+      final coordString = waypoints.map((w) => '${w.longitude},${w.latitude}').join(';');
       final url = Uri.parse(
-        'https://router.project-osrm.org/route/v1/driving/${start.longitude},${start.latitude};${end.longitude},${end.latitude}?overview=full&geometries=geojson',
+        'https://router.project-osrm.org/route/v1/driving/$coordString?overview=full&geometries=geojson',
       );
       final response = await http.get(
         url,
@@ -244,7 +294,7 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
 
     if (mounted) {
       setState(() {
-        _osrmRoutePoints = [];
+        _osrmRoutePoints = waypoints;
       });
     }
   }
@@ -278,6 +328,20 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
       shouldAutoCenter = true;
     }
 
+    if (widget.stationLocation != oldWidget.stationLocation ||
+        widget.stationAddress != oldWidget.stationAddress ||
+        widget.geofenceRadiusKm != oldWidget.geofenceRadiusKm) {
+      setState(() {
+        _resolvedStationLocation = widget.stationLocation;
+      });
+      if (_resolvedStationLocation == null && widget.stationAddress != null) {
+        _resolveStationFromAddress(widget.stationAddress);
+      }
+      _recalculateDistance();
+      _updateOsrmRoutes();
+      shouldAutoCenter = true;
+    }
+
     if (widget.driverLocation != null && widget.driverLocation != oldWidget.driverLocation) {
       if (_currentDriverPos == null) shouldAutoCenter = true;
       setState(() {
@@ -286,6 +350,7 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
       _recalculateDistance();
       _updateOsrmRoutes();
     }
+
     if (widget.destinationLocation != oldWidget.destinationLocation ||
         widget.destinationAddress != oldWidget.destinationAddress) {
       if (widget.destinationLocation != null) {
@@ -350,6 +415,8 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
         _fitAllPins();
       } else if (_currentDriverPos != null) {
         _centerOnRider();
+      } else if (_resolvedStationLocation != null) {
+        _centerOnStore();
       }
     });
   }
@@ -419,7 +486,6 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
       return null;
     }
 
-    // 1. Strip Plus Codes (e.g., "68HH+H76, Victoria, Calabarzon, Philippines")
     String queryAddr = cleanAddr;
     if (cleanAddr.contains('+')) {
       final parts = cleanAddr.split(',');
@@ -434,7 +500,6 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
       queryAddr = '$queryAddr, Philippines';
     }
 
-    // Query stripped address first
     LatLng? result = await queryNominatim(queryAddr);
     if (result != null) return result;
 
@@ -447,7 +512,6 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
       if (result != null) return result;
     }
 
-    // Fallback to individual parts (e.g., "Victoria, Laguna, Philippines")
     final parts = cleanAddr.split(',');
     for (var part in parts) {
       final trimmed = part.trim();
@@ -497,7 +561,6 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
           _autoCenterMap();
         }
 
-        // Listen to live GPS stream as rider moves
         _positionSubscription = Geolocator.getPositionStream(
           locationSettings: const LocationSettings(
             accuracy: LocationAccuracy.high,
@@ -534,10 +597,11 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
   }
 
   void _recalculateDistance() {
-    if (_currentDriverPos != null && _resolvedDestination != null) {
+    final start = _currentDriverPos ?? _resolvedStationLocation;
+    if (start != null && _resolvedDestination != null) {
       final meters = Geolocator.distanceBetween(
-        _currentDriverPos!.latitude,
-        _currentDriverPos!.longitude,
+        start.latitude,
+        start.longitude,
         _resolvedDestination!.latitude,
         _resolvedDestination!.longitude,
       );
@@ -545,11 +609,29 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
         _calculatedDistanceKm = meters / 1000.0;
       });
     }
+
+    if (_currentDriverPos != null && _resolvedStationLocation != null) {
+      final metersToShop = Geolocator.distanceBetween(
+        _currentDriverPos!.latitude,
+        _currentDriverPos!.longitude,
+        _resolvedStationLocation!.latitude,
+        _resolvedStationLocation!.longitude,
+      );
+      setState(() {
+        _calculatedDistanceToShopKm = metersToShop / 1000.0;
+      });
+    }
   }
 
   void _centerOnRider() {
     if (_currentDriverPos != null) {
       _mapController.move(_currentDriverPos!, 16.0);
+    }
+  }
+
+  void _centerOnStore() {
+    if (_resolvedStationLocation != null) {
+      _mapController.move(_resolvedStationLocation!, 16.0);
     }
   }
 
@@ -579,7 +661,7 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
     if (points.isEmpty) return;
     if (points.length == 1) {
       try {
-        _mapController.move(points.first, 15.0);
+        _mapController.move(points.first, 15.5);
       } catch (_) {}
       return;
     }
@@ -598,18 +680,18 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
 
     if ((maxLat - minLat).abs() < 0.00001 && (maxLng - minLng).abs() < 0.00001) {
       try {
-        _mapController.move(LatLng(minLat, minLng), 15.0);
+        _mapController.move(LatLng(minLat, minLng), 15.5);
       } catch (_) {}
       return;
     }
 
     try {
       final bounds = LatLngBounds(LatLng(minLat, minLng), LatLng(maxLat, maxLng));
-      _mapController.fitCamera(CameraFit.bounds(bounds: bounds, padding: const EdgeInsets.all(50)));
+      _mapController.fitCamera(CameraFit.bounds(bounds: bounds, padding: const EdgeInsets.all(55)));
     } catch (e) {
       debugPrint('Fit camera bounds error: $e');
       try {
-        _mapController.move(points.first, 15.0);
+        _mapController.move(points.first, 15.5);
       } catch (_) {}
     }
   }
@@ -618,42 +700,69 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
   Widget build(BuildContext context) {
     final driverPos = _currentDriverPos ?? _defaultCenter;
     final destPos = _resolvedDestination;
+    final stationPos = _resolvedStationLocation ?? _defaultCenter;
 
     final List<Marker> markers = [];
 
-    // Station / Business Marker
+    // 1. STORE / WATER REFILLING STATION MARKER (Always Prominently Displayed)
     if (_resolvedStationLocation != null) {
       markers.add(
         Marker(
-          point: _resolvedStationLocation!,
-          width: 140,
-          height: 70,
+          point: stationPos,
+          width: 170,
+          height: 80,
+          alignment: Alignment.bottomCenter,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
-                  color: AppColors.darkNavy,
-                  borderRadius: BorderRadius.circular(10),
-                  boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF0F2573), Color(0xFF0284C7)],
+                    begin: Alignment.topLeft,
+                    end: Alignment.bottomRight,
+                  ),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: const [
+                    BoxShadow(color: Colors.black26, blurRadius: 8, offset: Offset(0, 3)),
+                  ],
                 ),
-                child: Text(
-                  widget.stationName ?? 'Water Station',
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.water_drop_rounded, color: Color(0xFF38BDF8), size: 13),
+                    const SizedBox(width: 5),
+                    Flexible(
+                      child: Text(
+                        (widget.stationName != null && widget.stationName!.isNotEmpty)
+                            ? widget.stationName!
+                            : 'AquaSync Store',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 2),
+              const SizedBox(height: 3),
               Container(
-                padding: const EdgeInsets.all(6),
+                padding: const EdgeInsets.all(7),
                 decoration: BoxDecoration(
-                  color: AppColors.primary,
+                  color: const Color(0xFF0284C7),
                   shape: BoxShape.circle,
-                  border: Border.all(color: Colors.white, width: 2),
+                  border: Border.all(color: Colors.white, width: 2.5),
+                  boxShadow: const [
+                    BoxShadow(color: Colors.black26, blurRadius: 6, offset: Offset(0, 2)),
+                  ],
                 ),
-                child: const Icon(Icons.store_rounded, color: Colors.white, size: 18),
+                child: const Icon(Icons.storefront_rounded, color: Colors.white, size: 20),
               ),
             ],
           ),
@@ -661,7 +770,7 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
       );
     }
 
-    // Driver Marker (Clean, no big circle aura)
+    // 2. DRIVER MARKER (Clean Green Pulse Motorcycle Pin)
     if (_currentDriverPos != null) {
       final nameToShow = (widget.driverName != null && widget.driverName!.isNotEmpty)
           ? widget.driverName!
@@ -669,34 +778,54 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
       markers.add(
         Marker(
           point: driverPos,
-          width: 130,
-          height: 75,
+          width: 160,
+          height: 80,
+          alignment: Alignment.bottomCenter,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                 decoration: BoxDecoration(
-                  color: AppColors.successGreen,
-                  borderRadius: BorderRadius.circular(10),
-                  boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                  color: const Color(0xFF059669),
+                  borderRadius: BorderRadius.circular(12),
+                  boxShadow: const [
+                    BoxShadow(color: Colors.black26, blurRadius: 8, offset: Offset(0, 3)),
+                  ],
                 ),
-                child: Text(
-                  nameToShow,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.navigation_rounded, color: Color(0xFFA7F3D0), size: 12),
+                    const SizedBox(width: 5),
+                    Flexible(
+                      child: Text(
+                        'Rider • $nameToShow',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          color: Colors.white,
+                          fontSize: 11,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 0.3,
+                        ),
+                      ),
+                    ),
+                  ],
                 ),
               ),
-              const SizedBox(height: 2),
+              const SizedBox(height: 3),
               Container(
-                padding: const EdgeInsets.all(6),
+                padding: const EdgeInsets.all(7),
                 decoration: BoxDecoration(
-                  color: AppColors.successGreen,
+                  color: const Color(0xFF10B981),
                   shape: BoxShape.circle,
                   border: Border.all(color: Colors.white, width: 2.5),
+                  boxShadow: const [
+                    BoxShadow(color: Colors.black26, blurRadius: 6, offset: Offset(0, 2)),
+                  ],
                 ),
-                child: const Icon(Icons.two_wheeler_rounded, color: Colors.white, size: 18),
+                child: const Icon(Icons.two_wheeler_rounded, color: Colors.white, size: 20),
               ),
             ],
           ),
@@ -704,45 +833,82 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
       );
     }
 
-    // Single Destination Marker
+    // 3. SINGLE DESTINATION MARKER (Order Location)
     if (destPos != null) {
       markers.add(
         Marker(
           point: destPos,
-          width: 140,
-          height: 70,
+          width: 180,
+          height: 85,
+          alignment: Alignment.bottomCenter,
           child: GestureDetector(
             onTap: () {
-              if (widget.customerName != null) {
-                _showPointDetailsSheet(
-                  DeliveryMapPoint(
-                    orderId: '',
-                    orderNumber: widget.orderNumber ?? 'N/A',
-                    customerName: widget.customerName ?? 'Customer',
-                    address: widget.destinationAddress ?? 'Delivery Location',
-                    location: destPos,
-                  ),
-                );
-              }
+              _showPointDetailsSheet(
+                DeliveryMapPoint(
+                  orderId: '',
+                  orderNumber: widget.orderNumber ?? 'N/A',
+                  customerName: widget.customerName ?? 'Customer',
+                  address: widget.destinationAddress ?? 'Delivery Location',
+                  location: destPos,
+                ),
+              );
             },
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
                   decoration: BoxDecoration(
-                    color: AppColors.navy,
-                    borderRadius: BorderRadius.circular(10),
-                    boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                    color: const Color(0xFF0F172A),
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: const Color(0xFFEF4444).withValues(alpha: 0.7), width: 1),
+                    boxShadow: const [
+                      BoxShadow(color: Colors.black38, blurRadius: 8, offset: Offset(0, 3)),
+                    ],
                   ),
-                  child: Text(
-                    widget.customerName ?? 'Destination',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 7,
+                        height: 7,
+                        decoration: const BoxDecoration(
+                          color: Color(0xFFEF4444),
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Flexible(
+                        child: Text(
+                          (widget.orderNumber != null && widget.orderNumber!.isNotEmpty)
+                              ? '${widget.orderNumber} • ${widget.customerName ?? 'Customer'}'
+                              : (widget.customerName ?? 'Destination'),
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                            letterSpacing: 0.2,
+                          ),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                const Icon(Icons.location_on_rounded, color: AppColors.errorRed, size: 36),
+                const SizedBox(height: 3),
+                Container(
+                  padding: const EdgeInsets.all(7),
+                  decoration: BoxDecoration(
+                    color: const Color(0xFFEF4444),
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2.5),
+                    boxShadow: const [
+                      BoxShadow(color: Colors.black26, blurRadius: 6, offset: Offset(0, 2)),
+                    ],
+                  ),
+                  child: const Icon(Icons.location_on_rounded, color: Colors.white, size: 20),
+                ),
               ],
             ),
           ),
@@ -750,14 +916,28 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
       );
     }
 
-    // Multi Delivery Markers
-    for (var pt in _resolvedMultiPoints) {
+    // 4. MULTI DELIVERY MARKERS (Multiple Active Orders)
+    for (int idx = 0; idx < _resolvedMultiPoints.length; idx++) {
+      final pt = _resolvedMultiPoints[idx];
       final isOutForDelivery = pt.status.toLowerCase() == 'out_for_delivery';
+      final isDelivered = pt.status.toLowerCase() == 'delivered';
+
+      Color statusBgColor = const Color(0xFF0284C7);
+      Color pinIconColor = const Color(0xFF0284C7);
+      if (isOutForDelivery) {
+        statusBgColor = const Color(0xFFD97706);
+        pinIconColor = const Color(0xFFF59E0B);
+      } else if (isDelivered) {
+        statusBgColor = const Color(0xFF059669);
+        pinIconColor = const Color(0xFF10B981);
+      }
+
       markers.add(
         Marker(
           point: pt.location,
-          width: 130,
-          height: 65,
+          width: 170,
+          height: 80,
+          alignment: Alignment.bottomCenter,
           child: GestureDetector(
             onTap: () {
               if (widget.onMarkerTap != null) {
@@ -770,23 +950,48 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
               mainAxisSize: MainAxisSize.min,
               children: [
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 3),
+                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                   decoration: BoxDecoration(
-                    color: isOutForDelivery ? AppColors.tertiary : AppColors.darkText,
-                    borderRadius: BorderRadius.circular(8),
-                    boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4)],
+                    color: statusBgColor,
+                    borderRadius: BorderRadius.circular(10),
+                    boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6, offset: Offset(0, 2))],
                   ),
-                  child: Text(
-                    '${pt.orderNumber} • ${pt.customerName}',
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.bold),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 5, vertical: 1),
+                        decoration: BoxDecoration(
+                          color: Colors.white.withValues(alpha: 0.25),
+                          borderRadius: BorderRadius.circular(6),
+                        ),
+                        child: Text(
+                          '#${idx + 1}',
+                          style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900),
+                        ),
+                      ),
+                      const SizedBox(width: 5),
+                      Flexible(
+                        child: Text(
+                          '${pt.orderNumber} • ${pt.customerName}',
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: const TextStyle(color: Colors.white, fontSize: 10, fontWeight: FontWeight.bold),
+                        ),
+                      ),
+                    ],
                   ),
                 ),
-                Icon(
-                  Icons.location_on_rounded,
-                  color: isOutForDelivery ? AppColors.warningAmber : AppColors.primary,
-                  size: 32,
+                const SizedBox(height: 3),
+                Container(
+                  padding: const EdgeInsets.all(6),
+                  decoration: BoxDecoration(
+                    color: pinIconColor,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: Colors.white, width: 2),
+                    boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 4, offset: Offset(0, 2))],
+                  ),
+                  child: const Icon(Icons.location_on_rounded, color: Colors.white, size: 18),
                 ),
               ],
             ),
@@ -795,35 +1000,42 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
       );
     }
 
-    // Polylines (Routes: OSRM Turn-by-Turn Real Road Route or Clean Direct Line Fallback)
+    // 5. HD ROAD ROUTE POLYLINES (Dual Layer Casing Polyline)
     final List<Polyline> polylines = [];
 
-    if (_osrmRoutePoints.isNotEmpty) {
+    final List<LatLng> routePointsToDraw = _osrmRoutePoints.isNotEmpty
+        ? _osrmRoutePoints
+        : (driverPos != null && destPos != null ? <LatLng>[driverPos, destPos] : <LatLng>[]);
+
+    if (routePointsToDraw.isNotEmpty) {
+      // Outer Navy Casing Line
       polylines.add(
         Polyline(
-          points: _osrmRoutePoints,
-          color: AppColors.primary,
-          strokeWidth: 4.5,
+          points: routePointsToDraw,
+          color: const Color(0xFF0F172A).withValues(alpha: 0.75),
+          strokeWidth: 8.0,
         ),
       );
-    } else if (_currentDriverPos != null && destPos != null) {
+      // Inner Electric Sky Blue Line
       polylines.add(
         Polyline(
-          points: [_currentDriverPos!, destPos],
-          color: AppColors.primary,
-          strokeWidth: 4.5,
+          points: routePointsToDraw,
+          color: const Color(0xFF0284C7),
+          strokeWidth: 4.8,
         ),
       );
     }
 
     return ClipRRect(
-      borderRadius: BorderRadius.circular(16),
+      borderRadius: BorderRadius.circular(18),
       child: Stack(
         children: [
           FlutterMap(
             mapController: _mapController,
             options: MapOptions(
-              initialCenter: _currentDriverPos ?? destPos ?? _defaultCenter,
+              initialCenter: driverPos != null && driverPos.latitude != 0
+                  ? driverPos
+                  : (destPos ?? stationPos),
               initialZoom: widget.initialZoom,
               interactionOptions: InteractionOptions(
                 flags: widget.isInteractive ? InteractiveFlag.all : InteractiveFlag.drag,
@@ -834,85 +1046,138 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
                 urlTemplate: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
                 userAgentPackageName: 'com.example.aquasync_driver_app',
               ),
+              if (_resolvedStationLocation != null && widget.geofenceRadiusKm != null && widget.geofenceRadiusKm! > 0)
+                CircleLayer(
+                  circles: [
+                    CircleMarker(
+                      point: _resolvedStationLocation!,
+                      radius: widget.geofenceRadiusKm! * 1000.0, // in meters
+                      useRadiusInMeter: true,
+                      color: AppColors.primary.withValues(alpha: 0.12),
+                      borderColor: AppColors.primary.withValues(alpha: 0.6),
+                      borderStrokeWidth: 2.0,
+                    ),
+                  ],
+                ),
               if (polylines.isNotEmpty) PolylineLayer(polylines: polylines),
               MarkerLayer(markers: markers),
             ],
           ),
 
-          // Loading Overlay
+          // Loading Overlay Badge
           if (_isLoadingLocation)
             Positioned(
-              top: 10,
-              left: 10,
+              top: 12,
+              left: 12,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                 decoration: BoxDecoration(
-                  color: Colors.white,
+                  color: Colors.white.withValues(alpha: 0.92),
                   borderRadius: BorderRadius.circular(20),
-                  boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 4)],
+                  boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 6, offset: Offset(0, 2))],
                 ),
                 child: const Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    SizedBox(width: 12, height: 12, child: CircularProgressIndicator(strokeWidth: 2)),
+                    SizedBox(width: 14, height: 14, child: CircularProgressIndicator(strokeWidth: 2.2, color: AppColors.primary)),
                     SizedBox(width: 8),
-                    Text('Fetching Live GPS...', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold)),
+                    Text('Fetching Live GPS...', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.darkNavy)),
                   ],
                 ),
               ),
             ),
 
-          // Distance Overlay Badge (Single Delivery Mode)
-          if (destPos != null && _calculatedDistanceKm > 0)
+          // Distance to Shop Overlay Badge (Distance back to Water Station Hub)
+          if (_resolvedStationLocation != null && _calculatedDistanceToShopKm > 0)
             Positioned(
               top: 12,
-              right: 12,
+              left: _isLoadingLocation ? 175 : 12,
               child: Container(
-                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
                 decoration: BoxDecoration(
-                  color: AppColors.navy,
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF0284C7), Color(0xFF0369A1)],
+                  ),
                   borderRadius: BorderRadius.circular(20),
-                  boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 6)],
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+                  boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 8, offset: Offset(0, 3))],
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Icon(Icons.near_me_rounded, color: AppColors.tertiary, size: 14),
+                    const Icon(Icons.store_rounded, color: Colors.white, size: 14),
                     const SizedBox(width: 6),
                     Text(
-                      '${_calculatedDistanceKm.toStringAsFixed(1)} km away',
-                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 11),
+                      '${_calculatedDistanceToShopKm.toStringAsFixed(1)} km to shop',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 11, letterSpacing: 0.3),
                     ),
                   ],
                 ),
               ),
             ),
 
-          // Controls Panel
+          // Distance Overlay Header Badge
+          if (destPos != null && _calculatedDistanceKm > 0)
+            Positioned(
+              top: 12,
+              right: 12,
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 7),
+                decoration: BoxDecoration(
+                  gradient: const LinearGradient(
+                    colors: [Color(0xFF0F2573), Color(0xFF041D56)],
+                  ),
+                  borderRadius: BorderRadius.circular(20),
+                  border: Border.all(color: Colors.white.withValues(alpha: 0.2)),
+                  boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 8, offset: Offset(0, 3))],
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(Icons.near_me_rounded, color: Color(0xFF38BDF8), size: 15),
+                    const SizedBox(width: 6),
+                    Text(
+                      '${_calculatedDistanceKm.toStringAsFixed(1)} km to destination',
+                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.w900, fontSize: 11, letterSpacing: 0.3),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+
+          // Map Control Floating Action Buttons
           if (widget.showControls)
             Positioned(
-              bottom: 12,
-              right: 12,
+              bottom: 14,
+              right: 14,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
+                  if (_resolvedStationLocation != null) ...[
+                    _mapControlBtn(
+                      icon: Icons.storefront_rounded,
+                      tooltip: 'Center Water Station Hub',
+                      onTap: _centerOnStore,
+                    ),
+                    const SizedBox(height: 8),
+                  ],
                   _mapControlBtn(
                     icon: Icons.my_location_rounded,
-                    tooltip: 'Center Driver',
+                    tooltip: 'Center Driver GPS',
                     onTap: _centerOnRider,
                   ),
                   const SizedBox(height: 8),
                   if (destPos != null) ...[
                     _mapControlBtn(
                       icon: Icons.pin_drop_rounded,
-                      tooltip: 'Center Destination',
+                      tooltip: 'Center Order Destination',
                       onTap: _centerOnDestination,
                     ),
                     const SizedBox(height: 8),
                   ],
                   _mapControlBtn(
                     icon: Icons.zoom_out_map_rounded,
-                    tooltip: 'Fit All Pins',
+                    tooltip: 'Fit All Pins & Route',
                     onTap: _fitAllPins,
                   ),
                 ],
@@ -930,14 +1195,18 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
   }) {
     return Material(
       color: Colors.white,
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(14),
       elevation: 4,
+      shadowColor: Colors.black38,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.all(8),
-          child: Icon(icon, color: AppColors.navy, size: 20),
+        borderRadius: BorderRadius.circular(14),
+        child: Tooltip(
+          message: tooltip,
+          child: Container(
+            padding: const EdgeInsets.all(10),
+            child: Icon(icon, color: AppColors.darkNavy, size: 20),
+          ),
         ),
       ),
     );
@@ -946,9 +1215,10 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
   void _showPointDetailsSheet(DeliveryMapPoint pt) {
     showModalBottomSheet(
       context: context,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
       builder: (context) => Padding(
-        padding: const EdgeInsets.all(20),
+        padding: const EdgeInsets.all(22),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
@@ -956,44 +1226,59 @@ class _InAppMapWidgetState extends State<InAppMapWidget> {
             Row(
               children: [
                 Container(
-                  padding: const EdgeInsets.all(10),
+                  padding: const EdgeInsets.all(12),
                   decoration: BoxDecoration(
                     color: AppColors.primary.withValues(alpha: 0.1),
                     shape: BoxShape.circle,
                   ),
-                  child: const Icon(Icons.person_pin_circle_rounded, color: AppColors.primary, size: 24),
+                  child: const Icon(Icons.person_pin_circle_rounded, color: AppColors.primary, size: 26),
                 ),
-                const SizedBox(width: 12),
+                const SizedBox(width: 14),
                 Expanded(
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
-                      Text(pt.customerName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold)),
-                      Text('Order ${pt.orderNumber}', style: const TextStyle(color: AppColors.grayText, fontSize: 12)),
+                      Text(pt.customerName, style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: AppColors.midnightBlue)),
+                      const SizedBox(height: 2),
+                      Text('Order #${pt.orderNumber}', style: const TextStyle(color: AppColors.grayText, fontSize: 13, fontWeight: FontWeight.w600)),
                     ],
                   ),
                 ),
               ],
             ),
-            const SizedBox(height: 16),
-            Row(
-              children: [
-                const Icon(Icons.location_on_outlined, size: 18, color: AppColors.grayText),
-                const SizedBox(width: 8),
-                Expanded(child: Text(pt.address, style: const TextStyle(fontSize: 13, color: AppColors.darkText))),
-              ],
+            const SizedBox(height: 18),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: AppColors.dominantLightBlue,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: AppColors.border),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.location_on_rounded, size: 20, color: AppColors.primary),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      pt.address,
+                      style: const TextStyle(fontSize: 13, color: AppColors.darkText, fontWeight: FontWeight.w600, height: 1.3),
+                    ),
+                  ),
+                ],
+              ),
             ),
-            const SizedBox(height: 20),
+            const SizedBox(height: 22),
             SizedBox(
               width: double.infinity,
               child: ElevatedButton.icon(
                 onPressed: () => Navigator.pop(context),
-                icon: const Icon(Icons.check_rounded),
+                icon: const Icon(Icons.check_circle_rounded),
                 label: const Text('CLOSE PREVIEW'),
                 style: ElevatedButton.styleFrom(
-                  backgroundColor: AppColors.navy,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-                  padding: const EdgeInsets.symmetric(vertical: 12),
+                  backgroundColor: AppColors.darkNavy,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+                  padding: const EdgeInsets.symmetric(vertical: 14),
                 ),
               ),
             ),

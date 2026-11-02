@@ -217,7 +217,7 @@ class LiquidButton extends StatelessWidget {
               borderRadius: BorderRadius.circular(AppDesign.buttonRadius),
               border: isTranslucent
                   ? Border.all(
-                      color: AppColors.primary.withValues(alpha: 0.2),
+                      color: (textColor ?? color ?? AppColors.primary).withValues(alpha: 0.2),
                       width: 1.2,
                     )
                   : null,

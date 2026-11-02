@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -92,6 +93,248 @@ class SupabaseService {
     } catch (e) {
       debugPrint('Error updating FCM push token: $e');
     }
+  }
+
+  // --- WATER REFILL STATION LOCATION & SETTINGS ---
+
+  /// Helper to parse station data payload supporting all specified field aliases:
+  /// - Latitude: latitude, lat, station_latitude
+  /// - Longitude: longitude, lng, station_longitude
+  /// - Station Name: station_name, full_name, name
+  /// - Address: address, station_address
+  /// - Geofence Radius: coverage_radius_km, geofence_radius_km, radius_km, geofence_radius
+  static Map<String, dynamic> parseStationData(Map<String, dynamic> raw) {
+    num? parseNum(dynamic val) {
+      if (val == null) return null;
+      if (val is num) return val;
+      return double.tryParse(val.toString());
+    }
+
+    final lat = parseNum(raw['latitude']) ??
+        parseNum(raw['lat']) ??
+        parseNum(raw['station_latitude']);
+
+    final lng = parseNum(raw['longitude']) ??
+        parseNum(raw['lng']) ??
+        parseNum(raw['station_longitude']);
+
+    final name = raw['station_name']?.toString() ??
+        raw['full_name']?.toString() ??
+        raw['name']?.toString() ??
+        raw['business_name']?.toString() ??
+        raw['shop_name']?.toString();
+
+    final address = raw['address']?.toString() ??
+        raw['station_address']?.toString() ??
+        raw['shop_address']?.toString() ??
+        raw['location_address']?.toString();
+
+    final radiusKm = parseNum(raw['coverage_radius_km']) ??
+        parseNum(raw['geofence_radius_km']) ??
+        parseNum(raw['radius_km']) ??
+        parseNum(raw['geofence_radius']) ??
+        parseNum(raw['radius']) ??
+        parseNum(raw['coverage_radius']);
+
+    final Map<String, dynamic> result = Map<String, dynamic>.from(raw);
+
+    if (lat != null) {
+      result['latitude'] = lat;
+      result['lat'] = lat;
+      result['station_latitude'] = lat;
+    }
+    if (lng != null) {
+      result['longitude'] = lng;
+      result['lng'] = lng;
+      result['station_longitude'] = lng;
+    }
+    if (name != null && name.isNotEmpty) {
+      result['station_name'] = name;
+      result['full_name'] = name;
+      result['name'] = name;
+      result['business_name'] = name;
+    }
+    if (address != null && address.isNotEmpty) {
+      result['address'] = address;
+      result['station_address'] = address;
+    }
+    if (radiusKm != null) {
+      result['coverage_radius_km'] = radiusKm;
+      result['geofence_radius_km'] = radiusKm;
+      result['radius_km'] = radiusKm;
+      result['geofence_radius'] = radiusKm;
+      result['radius'] = radiusKm;
+    }
+
+    return result;
+  }
+
+  /// Fetches Water Refill Station location, coordinates, and geofence radius from Supabase.
+  /// Queries tables: station_settings, system_settings (key: station_config), and profiles (admin role).
+  static Future<Map<String, dynamic>?> fetchStationLocation() async {
+    return await fetchShopProfile();
+  }
+
+  /// Alias for fetchStationLocation()
+  static Future<Map<String, dynamic>?> fetchShopProfile() async {
+    Map<String, dynamic>? accumulatedData;
+
+    // 1. Query public.station_settings table
+    try {
+      final data = await client.from('station_settings').select().limit(1).maybeSingle();
+      if (data != null && data.isNotEmpty) {
+        final parsed = parseStationData(data);
+        if (parsed['latitude'] != null && parsed['longitude'] != null) {
+          return parsed;
+        }
+        accumulatedData = parsed;
+      }
+    } catch (e) {
+      debugPrint('fetchShopProfile station_settings query notice: $e');
+    }
+
+    // 2. Query public.system_settings table (key: station_config, station_settings, shop_config, etc.)
+    try {
+      final sysData = await client
+          .from('system_settings')
+          .select()
+          .or('key.eq.station_config,key.eq.station_settings,key.eq.shop_config,key.eq.station_location')
+          .limit(1)
+          .maybeSingle();
+
+      if (sysData != null && sysData.isNotEmpty) {
+        dynamic val = sysData['value'];
+        Map<String, dynamic> configMap = {};
+        if (val is Map<String, dynamic>) {
+          configMap = Map<String, dynamic>.from(val);
+        } else if (val is String) {
+          try {
+            final decoded = jsonDecode(val);
+            if (decoded is Map<String, dynamic>) {
+              configMap = decoded;
+            }
+          } catch (_) {}
+        }
+        if (configMap.isEmpty) {
+          configMap = Map<String, dynamic>.from(sysData);
+        }
+
+        final parsed = parseStationData(configMap);
+        if (parsed['latitude'] != null && parsed['longitude'] != null) {
+          if (accumulatedData != null) {
+            return {...accumulatedData, ...parsed};
+          }
+          return parsed;
+        }
+        if (accumulatedData != null) {
+          accumulatedData = {...accumulatedData, ...parsed};
+        } else {
+          accumulatedData = parsed;
+        }
+      }
+    } catch (e) {
+      debugPrint('fetchShopProfile system_settings query notice: $e');
+    }
+
+    // 3. Query public.profiles table for admin role (admin, station_admin, owner, station)
+    try {
+      final profilesRes = await client
+          .from('profiles')
+          .select()
+          .or('role.eq.admin,role.eq.station_admin,role.eq.owner,role.eq.station')
+          .limit(5);
+
+      if (profilesRes.isNotEmpty) {
+        for (var p in profilesRes) {
+          final Map<String, dynamic> pMap = Map<String, dynamic>.from(p);
+          final parsed = parseStationData(pMap);
+          if (parsed['latitude'] != null && parsed['longitude'] != null) {
+            if (accumulatedData != null) {
+              return {...accumulatedData, ...parsed};
+            }
+            return parsed;
+          }
+          if (accumulatedData != null) {
+            accumulatedData = {...accumulatedData, ...parsed};
+          } else {
+            accumulatedData = parsed;
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('fetchShopProfile profiles admin query notice: $e');
+    }
+
+    // 4. Query profiles table fallback for non-null station_latitude
+    try {
+      final stationProfile = await client
+          .from('profiles')
+          .select()
+          .not('station_latitude', 'is', null)
+          .limit(1)
+          .maybeSingle();
+
+      if (stationProfile != null) {
+        final parsed = parseStationData(Map<String, dynamic>.from(stationProfile));
+        if (parsed['latitude'] != null && parsed['longitude'] != null) {
+          if (accumulatedData != null) {
+            return {...accumulatedData, ...parsed};
+          }
+          return parsed;
+        }
+        if (accumulatedData != null) {
+          accumulatedData = {...accumulatedData, ...parsed};
+        } else {
+          accumulatedData = parsed;
+        }
+      }
+    } catch (e) {
+      debugPrint('fetchShopProfile fallback notice: $e');
+    }
+
+    return accumulatedData;
+  }
+
+  /// Realtime channel subscription for automatic station updates.
+  /// When Admin modifies station coordinates or geofence radius in Admin Dashboard,
+  /// this stream listener fires and re-fetches updated station location.
+  static RealtimeChannel subscribeToStationLocation(Function(Map<String, dynamic> stationData) onUpdate) {
+    final channel = client.channel('station-location-updates-${DateTime.now().millisecondsSinceEpoch}');
+
+    void handleEvent(dynamic payload) async {
+      try {
+        final updated = await fetchStationLocation();
+        if (updated != null) {
+          onUpdate(updated);
+        }
+      } catch (e) {
+        debugPrint('Error handling real-time station update: $e');
+      }
+    }
+
+    channel.onPostgresChanges(
+      event: PostgresChangeEvent.all,
+      schema: 'public',
+      table: 'station_settings',
+      callback: handleEvent,
+    );
+
+    channel.onPostgresChanges(
+      event: PostgresChangeEvent.all,
+      schema: 'public',
+      table: 'system_settings',
+      callback: handleEvent,
+    );
+
+    channel.onPostgresChanges(
+      event: PostgresChangeEvent.all,
+      schema: 'public',
+      table: 'profiles',
+      callback: handleEvent,
+    );
+
+    channel.subscribe();
+    return channel;
   }
 
   // --- DELIVERIES & ORDERS ---
@@ -679,8 +922,48 @@ class SupabaseService {
 
     if (!isCurrentlyBorrowed) {
       // --- CASE A: Container is currently 'available' -> Delivering / Lending to Customer ---
-      final targetCustomerId = (customerId != null && customerId.isNotEmpty) ? customerId : null;
-      final targetCustomerName = (customerName != null && customerName.isNotEmpty) ? customerName : 'Customer';
+      String? targetCustomerId = (customerId != null && customerId.isNotEmpty) ? customerId : null;
+      String targetCustomerName = (customerName != null && customerName.isNotEmpty) ? customerName : 'Customer';
+
+      // If customerId is null or empty but orderId is provided, attempt to fetch customer_id from orders or deliveries table
+      if ((targetCustomerId == null || targetCustomerId.isEmpty) && orderId != null && orderId.isNotEmpty) {
+        try {
+          final ordData = await client
+              .from('orders')
+              .select('id, customer_id, customer_name, profiles:customer_id(full_name)')
+              .or('id.eq.$orderId,order_number.eq.$orderId')
+              .maybeSingle();
+
+          if (ordData != null) {
+            targetCustomerId = ordData['customer_id']?.toString();
+            final profile = ordData['profiles'];
+            if (targetCustomerName == 'Customer' || targetCustomerName.isEmpty) {
+              targetCustomerName = ordData['customer_name']?.toString()
+                  ?? (profile is Map ? profile['full_name']?.toString() : null)
+                  ?? 'Customer';
+            }
+          } else {
+            final delivData = await client
+                .from('deliveries')
+                .select('orders(id, customer_id, customer_name, profiles:customer_id(full_name))')
+                .or('id.eq.$orderId,order_id.eq.$orderId')
+                .maybeSingle();
+            if (delivData != null && delivData['orders'] != null) {
+              final ord = delivData['orders'];
+              targetCustomerId = ord['customer_id']?.toString();
+              final profile = ord['profiles'];
+              if (targetCustomerName == 'Customer' || targetCustomerName.isEmpty) {
+                targetCustomerName = ord['customer_name']?.toString()
+                    ?? (profile is Map ? profile['full_name']?.toString() : null)
+                    ?? 'Customer';
+              }
+            }
+          }
+        } catch (e) {
+          debugPrint('Error resolving customer_id from orderId ($orderId): $e');
+        }
+      }
+
       final notesText = 'Container delivered and scanned by Driver $driverIdentifier';
 
       // 1. Update public.gallons
@@ -927,6 +1210,38 @@ class SupabaseService {
 
   static Future<void> markNotificationAsRead(String notificationId) async {
     await client.from('notifications').update({'is_read': true}).eq('id', notificationId);
+  }
+
+  static Future<void> markAllNotificationsAsRead(String userId) async {
+    await client.from('notifications').update({'is_read': true}).eq('user_id', userId).eq('is_read', false);
+  }
+
+  static Future<void> deleteNotification(String notificationId) async {
+    await client.from('notifications').delete().eq('id', notificationId);
+  }
+
+  static Future<void> deleteAllNotifications(String userId) async {
+    await client.from('notifications').delete().eq('user_id', userId);
+  }
+
+  static Future<void> createNotification({
+    required String userId,
+    required String title,
+    required String message,
+    String type = 'info',
+  }) async {
+    try {
+      await client.from('notifications').insert({
+        'user_id': userId,
+        'title': title,
+        'message': message,
+        'type': type,
+        'is_read': false,
+        'created_at': DateTime.now().toIso8601String(),
+      });
+    } catch (e) {
+      debugPrint('Error creating notification: $e');
+    }
   }
 
   // --- ORDER MESSAGING (order_messages) ---
