@@ -3287,7 +3287,7 @@ class _TasksHomeScreenState extends State<TasksHomeScreen> with WidgetsBindingOb
 }
 
 // -----------------------------------------------------------------------------
-// TAB 2: QR GALLON SCANNER SCREEN (Physical Gallon Only)
+// TAB 2: QR GALLON SCANNER SCREEN (Physical Gallon Real-Time Supabase Tracking)
 // -----------------------------------------------------------------------------
 
 class QrScannerScreen extends StatefulWidget {
@@ -3301,17 +3301,86 @@ class QrScannerScreen extends StatefulWidget {
 
 class _QrScannerScreenState extends State<QrScannerScreen> {
   final MobileScannerController _scannerController = MobileScannerController();
+  
   bool _isProcessingCode = false;
   bool _isSavingTransaction = false;
+  bool _isBatchScanMode = false;
 
-  Map<String, dynamic>? _scannedGallonData;
-  String? _scanResultState; // 'verified', 'not_found', 'already_scanned', 'error'
-  String _scanResultText = '';
+  Map<String, dynamic>? _latestToggleResult;
+  String? _scanResultState; // 'success', 'pending', 'unregistered', 'error'
+
+  final List<Map<String, dynamic>> _batchScannedList = [];
+
+  Order? _selectedOrderFromList;
+  List<Order> _activeDriverOrders = [];
+  bool _isLoadingOrders = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _selectedOrderFromList = widget.activeOrder;
+    _fetchDriverActiveOrders();
+  }
 
   @override
   void dispose() {
     _scannerController.dispose();
     super.dispose();
+  }
+
+  Future<void> _fetchDriverActiveOrders() async {
+    final driverId = SupabaseService.currentUser?.id;
+    if (driverId == null || driverId.isEmpty) return;
+
+    setState(() => _isLoadingOrders = true);
+    try {
+      final rawDeliveries = await SupabaseService.fetchDeliveries(driverId);
+      final activeList = <Order>[];
+
+      for (var item in rawDeliveries) {
+        final st = item['status']?.toString().toLowerCase() ?? '';
+        if (st == 'out_for_delivery' || st == 'accepted' || st == 'assigned') {
+          final orderData = item['orders'] ?? {};
+          final profilesData = orderData['profiles'] ?? {};
+
+          String custName = 'Customer';
+          String custId = '';
+          if (profilesData is Map && profilesData.isNotEmpty) {
+            custName = profilesData['full_name']?.toString() ?? 'Customer';
+            custId = profilesData['id']?.toString() ?? orderData['customer_id']?.toString() ?? '';
+          }
+
+          final orderObj = Order(
+            id: item['id']?.toString() ?? '',
+            orderId: item['order_id']?.toString() ?? '',
+            orderNumber: orderData['order_number']?.toString() ?? 'ORD-000',
+            customer: custName,
+            customerId: custId,
+            phone: profilesData['phone']?.toString() ?? '',
+            address: item['delivery_address']?.toString() ?? '',
+            quantity: '${orderData['total_amount'] ?? 1} Gallons',
+            totalGallons: orderData['total_amount'] is int ? orderData['total_amount'] : 1,
+            payment: orderData['payment_method']?.toString() ?? 'COD',
+            amount: (orderData['total_amount'] is num) ? (orderData['total_amount'] as num).toDouble() : 0.0,
+            status: st,
+          );
+          activeList.add(orderObj);
+        }
+      }
+
+      if (mounted) {
+        setState(() {
+          _activeDriverOrders = activeList;
+          if (_selectedOrderFromList == null && _activeDriverOrders.isNotEmpty) {
+            _selectedOrderFromList = _activeDriverOrders.first;
+          }
+        });
+      }
+    } catch (e) {
+      debugPrint('Error loading active orders for scanner: $e');
+    } finally {
+      if (mounted) setState(() => _isLoadingOrders = false);
+    }
   }
 
   void _onBarcodeDetected(BarcodeCapture capture) async {
@@ -3328,156 +3397,296 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
     });
 
     try {
-      final gallonRecord = await SupabaseService.verifyGallon(rawCode);
+      // Step 1: Query public.gallons (or rfid_qr_records)
+      final gallonRecord = await SupabaseService.fetchContainerByCode(rawCode);
 
       if (!mounted) return;
 
-      if (gallonRecord != null) {
-        final currentStatus = gallonRecord['status']?.toString() ?? 'available';
-        
-        // Save locally for data retention across screen navigation and tab switching
-        await ScannedItemsManager.instance.saveScannedItem(
-          ScannedGallonItem(
-            id: gallonRecord['id']?.toString() ?? '',
-            gallonCode: rawCode,
-            orderId: widget.activeOrder?.orderId ?? '',
-            orderNumber: widget.activeOrder?.orderNumber ?? 'General Scan',
-            scannedAt: DateTime.now(),
-            status: currentStatus,
-            customerName: widget.activeOrder?.customer ?? 'Customer',
-            deliveryAddress: widget.activeOrder?.address ?? '',
-          ),
-        );
-
-        final isCurrentlyBorrowed = currentStatus == 'borrowed';
-
-        if (!isCurrentlyBorrowed) {
-          setState(() {
-            _scannedGallonData = null;
-            _scanResultState = 'warning';
-            _scanResultText = 'Only BORROWED gallons can be scanned for return here!';
-          });
-          return;
-        }
-
+      if (gallonRecord == null) {
+        // Step 1 Fallback: Container code not registered in database
         setState(() {
-          _scannedGallonData = gallonRecord;
-          _scanResultState = 'verified';
-          _scanResultText = 'Gallon Borrowed by Customer. Click below to confirm return!';
+          _scanResultState = 'unregistered';
         });
 
-        _showReturnConfirmationDialog(gallonRecord);
+        _showUnregisteredGallonDialog(rawCode);
       } else {
-        setState(() {
-          _scannedGallonData = null;
-          _scanResultState = 'not_found';
-          _scanResultText = 'Physical Gallon $rawCode not found in database.';
-        });
+        // Step 2: Container Record Found! Prepare Toggle Logic
+        final currentStatus = gallonRecord['status']?.toString() ?? 'available';
+        final isCurrentlyBorrowed = (currentStatus.toLowerCase() == 'borrowed');
+
+        final effectiveOrder = widget.activeOrder ?? _selectedOrderFromList;
+
+        final targetCustomerId = isCurrentlyBorrowed
+            ? gallonRecord['customer_id']?.toString()
+            : (effectiveOrder?.customerId ?? gallonRecord['customer_id']?.toString());
+
+        final targetCustomerName = isCurrentlyBorrowed
+            ? (gallonRecord['customer_name']?.toString() ?? 'Assigned Customer')
+            : (effectiveOrder?.customer ?? gallonRecord['customer_name']?.toString() ?? 'Customer');
+
+        final gallonId = gallonRecord['id']?.toString() ?? '';
+        final gallonCode = gallonRecord['gallon_code']?.toString() ?? rawCode;
+
+        if (_isBatchScanMode) {
+          // --- BATCH SCAN MODE: Auto-execute real-time toggle in Supabase ---
+          final toggleResult = await SupabaseService.executeGallonStatusToggle(
+            gallonId: gallonId,
+            gallonCode: gallonCode,
+            currentStatus: currentStatus,
+            customerId: targetCustomerId,
+            customerName: targetCustomerName,
+            orderId: effectiveOrder?.orderId,
+          );
+
+          // Save locally to persist scan state
+          await ScannedItemsManager.instance.saveScannedItem(
+            ScannedGallonItem(
+              id: gallonId,
+              gallonCode: gallonCode,
+              orderId: effectiveOrder?.orderId ?? '',
+              orderNumber: effectiveOrder?.orderNumber ?? 'Batch Scan',
+              scannedAt: DateTime.now(),
+              status: toggleResult['new_status'] ?? 'borrowed',
+              customerName: targetCustomerName,
+              deliveryAddress: effectiveOrder?.address ?? '',
+            ),
+          );
+
+          if (effectiveOrder != null) {
+            effectiveOrder.verifiedGallonIds.add(gallonId);
+            effectiveOrder.verifiedGallonCodes.add(gallonCode);
+          }
+
+          setState(() {
+            _latestToggleResult = toggleResult;
+            _scanResultState = 'success';
+            _batchScannedList.insert(0, toggleResult);
+          });
+
+          DriverNotification.show(
+            context,
+            title: toggleResult['new_status'] == 'borrowed' ? 'BORROWED ✓' : 'RETURNED ✓',
+            message: toggleResult['display_message'] ?? '',
+            backgroundColor: AppColors.successGreen,
+            icon: Icons.check_circle_outline,
+          );
+        } else {
+          // --- SINGLE SCAN MODE: Prompt Confirmation Card / Dialog with Details ---
+          setState(() {
+            _scanResultState = 'pending';
+          });
+
+          _showToggleConfirmationDialog(
+            gallonRecord: gallonRecord,
+            targetCustomerId: targetCustomerId,
+            targetCustomerName: targetCustomerName,
+            effectiveOrder: effectiveOrder,
+          );
+        }
       }
     } catch (e) {
       if (mounted) {
         setState(() {
-          _scannedGallonData = null;
           _scanResultState = 'error';
-          _scanResultText = 'Error querying gallon: $e';
         });
+        DriverNotification.show(
+          context,
+          title: 'SCAN ERROR',
+          message: 'Error processing container: $e',
+          backgroundColor: AppColors.errorRed,
+          icon: Icons.error_outline,
+        );
       }
     } finally {
-      await Future.delayed(const Duration(milliseconds: 1800));
+      final delayMs = _isBatchScanMode ? 1400 : 1000;
+      await Future.delayed(Duration(milliseconds: delayMs));
       if (mounted) {
         setState(() => _isProcessingCode = false);
       }
     }
   }
 
-  Future<void> _handleBorrowReturnAction(String action) async {
-    if (_scannedGallonData == null || _isSavingTransaction) return;
-
-    final gallonId = _scannedGallonData!['id']?.toString();
-    if (gallonId == null || gallonId.isEmpty) return;
-
-    setState(() => _isSavingTransaction = true);
-
-    final canonicalAction = action == 'borrow' ? 'borrow' : 'return';
-    final canonicalStatus = canonicalAction == 'borrow' ? 'borrowed' : 'available';
-
-    try {
-      await SupabaseService.driverGallonAction(
-        gallonId: gallonId,
-        orderId: widget.activeOrder?.orderId ?? '',
-        action: canonicalAction,
-      );
-
-      setState(() {
-        if (_scannedGallonData != null) _scannedGallonData!['status'] = canonicalStatus;
-        _scanResultText = 'Gallon marked as ${canonicalAction.replaceAll('_', ' ').toUpperCase()}ED successfully';
-      });
-    } catch (e) {
-      if (mounted) {
-        DriverNotification.show(
-          context,
-          title: 'TRANSACTION FAILED',
-          message: 'Transaction failed: $e',
-          backgroundColor: AppColors.errorRed,
-          icon: Icons.error_outline,
-        );
-      }
-    } finally {
-      if (mounted) setState(() => _isSavingTransaction = false);
-    }
-  }
-
-  void _showReturnConfirmationDialog(Map<String, dynamic> gallonData) async {
-    final gallonCode = gallonData['gallon_code']?.toString() ?? 'N/A';
-    final customerId = gallonData['customer_id']?.toString();
-
-    String customerName = 'Unknown Customer';
-    if (customerId != null) {
-      final profile = await SupabaseService.fetchProfile(customerId);
-      if (profile != null) {
-        customerName = profile['full_name'] ?? 'Unknown Customer';
-      }
-    }
-
-    if (!mounted) return;
-
+  void _showUnregisteredGallonDialog(String rawCode) {
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        backgroundColor: Colors.white,
         title: const Row(
           children: [
-            Icon(Icons.keyboard_return_rounded, color: AppColors.primary),
+            Icon(Icons.warning_amber_rounded, color: AppColors.errorRed, size: 28),
             SizedBox(width: 10),
-            Text('Confirm Return', style: TextStyle(fontWeight: FontWeight.bold)),
+            Expanded(
+              child: Text(
+                'Unregistered QR Code',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: AppColors.darkText),
+              ),
+            ),
           ],
         ),
         content: Column(
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            const Text('Are you sure you want to return this gallon to the station?', style: TextStyle(color: AppColors.slateText)),
+            Text(
+              'Unregistered Gallon QR Code',
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.errorRed),
+            ),
+            const SizedBox(height: 8),
+            Text(
+              'The scanned code "$rawCode" does not match any container in the station gallons database or RFID QR records.',
+              style: const TextStyle(fontSize: 13, color: AppColors.slateText, height: 1.4),
+            ),
+            const SizedBox(height: 14),
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: AppColors.errorRed.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: AppColors.errorRed.withValues(alpha: 0.2)),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.info_outline, size: 16, color: AppColors.errorRed),
+                  SizedBox(width: 8),
+                  Expanded(
+                    child: Text(
+                      'Please verify container tag or register code in admin station management.',
+                      style: TextStyle(fontSize: 11, color: AppColors.darkText, fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+        actions: [
+          ElevatedButton.icon(
+            onPressed: () => Navigator.pop(context),
+            icon: const Icon(Icons.qr_code_scanner, size: 18),
+            label: const Text('DISMISS & SCAN AGAIN'),
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.errorRed,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showToggleConfirmationDialog({
+    required Map<String, dynamic> gallonRecord,
+    required String? targetCustomerId,
+    required String? targetCustomerName,
+    required Order? effectiveOrder,
+  }) {
+    final gallonId = gallonRecord['id']?.toString() ?? '';
+    final gallonCode = gallonRecord['gallon_code']?.toString() ?? 'N/A';
+    final currentStatus = gallonRecord['status']?.toString() ?? 'available';
+    final isCurrentlyBorrowed = (currentStatus.toLowerCase() == 'borrowed');
+
+    final previousStatusStr = currentStatus.toUpperCase();
+    final newStatusStr = isCurrentlyBorrowed ? 'AVAILABLE' : 'BORROWED';
+    final actionName = isCurrentlyBorrowed ? 'Return Empty Container' : 'Lend Container to Customer';
+
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
+        backgroundColor: Colors.white,
+        title: Row(
+          children: [
+            Icon(
+              isCurrentlyBorrowed ? Icons.inbox_rounded : Icons.outbox_rounded,
+              color: isCurrentlyBorrowed ? AppColors.mediumBlue : AppColors.successGreen,
+              size: 26,
+            ),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                actionName,
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.darkText),
+              ),
+            ),
+          ],
+        ),
+        content: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Container(
+              padding: const EdgeInsets.all(12),
+              decoration: BoxDecoration(
+                color: const Color(0xFFF0F9FF),
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
+              ),
+              child: Row(
+                children: [
+                  const Icon(Icons.compare_arrows_rounded, color: AppColors.primary, size: 22),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        const Text('STATUS TOGGLE TRANSITION', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.grayText)),
+                        const SizedBox(height: 2),
+                        Row(
+                          children: [
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(color: Colors.grey.shade200, borderRadius: BorderRadius.circular(6)),
+                              child: Text(previousStatusStr, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.darkText)),
+                            ),
+                            const Padding(
+                              padding: EdgeInsets.symmetric(horizontal: 6),
+                              child: Icon(Icons.arrow_forward_rounded, size: 14, color: AppColors.primary),
+                            ),
+                            Container(
+                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              decoration: BoxDecoration(
+                                color: isCurrentlyBorrowed ? AppColors.successBg : AppColors.mediumBlue.withValues(alpha: 0.15),
+                                borderRadius: BorderRadius.circular(6),
+                              ),
+                              child: Text(
+                                newStatusStr,
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.bold,
+                                  color: isCurrentlyBorrowed ? AppColors.successGreen : AppColors.mediumBlue,
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
             const SizedBox(height: 16),
             _detailRow('Gallon Code:', gallonCode),
-            _detailRow('Borrowed by:', customerName),
+            _detailRow(
+              isCurrentlyBorrowed ? 'Previous Owner:' : 'Assigned Customer:',
+              targetCustomerName ?? 'Customer',
+            ),
+            if (effectiveOrder != null) _detailRow('Target Delivery:', effectiveOrder.orderNumber),
             const SizedBox(height: 12),
             Container(
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: AppColors.primary.withValues(alpha: 0.1),
+                color: AppColors.lightBg,
                 borderRadius: BorderRadius.circular(12),
               ),
-              child: const Row(
-                children: [
-                  Icon(Icons.info_outline, size: 16, color: AppColors.primary),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'This will mark the gallon as AVAILABLE in the inventory.',
-                      style: TextStyle(fontSize: 11, color: AppColors.navy, fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ],
+              child: Text(
+                isCurrentlyBorrowed
+                    ? 'Notes: Empty container collected and returned to station by Driver'
+                    : 'Notes: Container delivered and scanned by Driver',
+                style: const TextStyle(fontSize: 11, color: AppColors.slateText, fontStyle: FontStyle.italic),
               ),
             ),
           ],
@@ -3487,21 +3696,101 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
             onPressed: () => Navigator.pop(context),
             child: const Text('CANCEL', style: TextStyle(color: AppColors.grayText, fontWeight: FontWeight.bold)),
           ),
-          ElevatedButton(
-            onPressed: () {
+          ElevatedButton.icon(
+            onPressed: () async {
               Navigator.pop(context);
-              _handleBorrowReturnAction('return');
+              await _executeToggleForRecord(
+                gallonRecord: gallonRecord,
+                targetCustomerId: targetCustomerId,
+                targetCustomerName: targetCustomerName,
+                effectiveOrder: effectiveOrder,
+              );
             },
+            icon: const Icon(Icons.check_circle_rounded, size: 18),
+            label: Text(isCurrentlyBorrowed ? 'CONFIRM RETURN' : 'CONFIRM BORROW'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: AppColors.primary,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-              padding: const EdgeInsets.symmetric(horizontal: 20),
+              backgroundColor: isCurrentlyBorrowed ? AppColors.primary : AppColors.successGreen,
+              foregroundColor: Colors.white,
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             ),
-            child: const Text('CONFIRM RETURN'),
           ),
         ],
       ),
     );
+  }
+
+  Future<void> _executeToggleForRecord({
+    required Map<String, dynamic> gallonRecord,
+    required String? targetCustomerId,
+    required String? targetCustomerName,
+    required Order? effectiveOrder,
+  }) async {
+    final gallonId = gallonRecord['id']?.toString() ?? '';
+    final gallonCode = gallonRecord['gallon_code']?.toString() ?? '';
+    final currentStatus = gallonRecord['status']?.toString() ?? 'available';
+
+    if (gallonId.isEmpty) return;
+
+    setState(() => _isSavingTransaction = true);
+
+    try {
+      final toggleResult = await SupabaseService.executeGallonStatusToggle(
+        gallonId: gallonId,
+        gallonCode: gallonCode,
+        currentStatus: currentStatus,
+        customerId: targetCustomerId,
+        customerName: targetCustomerName,
+        orderId: effectiveOrder?.orderId,
+      );
+
+      // Save locally to ScannedItemsManager
+      await ScannedItemsManager.instance.saveScannedItem(
+        ScannedGallonItem(
+          id: gallonId,
+          gallonCode: gallonCode,
+          orderId: effectiveOrder?.orderId ?? '',
+          orderNumber: effectiveOrder?.orderNumber ?? 'General Scan',
+          scannedAt: DateTime.now(),
+          status: toggleResult['new_status'] ?? 'borrowed',
+          customerName: targetCustomerName ?? 'Customer',
+          deliveryAddress: effectiveOrder?.address ?? '',
+        ),
+      );
+
+      if (effectiveOrder != null) {
+        effectiveOrder.verifiedGallonIds.add(gallonId);
+        effectiveOrder.verifiedGallonCodes.add(gallonCode);
+      }
+
+      setState(() {
+        _latestToggleResult = toggleResult;
+        _scanResultState = 'success';
+        _batchScannedList.insert(0, toggleResult);
+      });
+
+      if (mounted) {
+        DriverNotification.show(
+          context,
+          title: toggleResult['new_status'] == 'borrowed' ? 'BORROWED CONFIRMED' : 'RETURNED CONFIRMED',
+          message: toggleResult['display_message'] ?? '',
+          backgroundColor: AppColors.successGreen,
+          icon: Icons.check_circle_outline,
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        DriverNotification.show(
+          context,
+          title: 'TRANSACTION FAILED',
+          message: 'Error updating gallon status: $e',
+          backgroundColor: AppColors.errorRed,
+          icon: Icons.error_outline,
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isSavingTransaction = false);
+    }
   }
 
   Widget _detailRow(String label, String value) {
@@ -3511,14 +3800,81 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
         children: [
           Text(label, style: const TextStyle(fontSize: 12, color: AppColors.grayText, fontWeight: FontWeight.bold)),
           const SizedBox(width: 8),
-          Expanded(child: Text(value, style: const TextStyle(fontSize: 13, color: AppColors.darkText, fontWeight: FontWeight.w900))),
+          Expanded(
+            child: Text(
+              value,
+              style: const TextStyle(fontSize: 13, color: AppColors.darkText, fontWeight: FontWeight.w900),
+            ),
+          ),
         ],
       ),
     );
   }
 
+  void _showOrderSelectionModal() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (context) {
+        return Container(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  const Text('Select Active Delivery Order', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.navy)),
+                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
+                ],
+              ),
+              const SizedBox(height: 8),
+              if (_activeDriverOrders.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 20),
+                  child: Center(
+                    child: Text('No active delivery orders found for driver.', style: TextStyle(color: AppColors.grayText)),
+                  ),
+                )
+              else
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: _activeDriverOrders.length,
+                    separatorBuilder: (_, __) => const Divider(),
+                    itemBuilder: (context, index) {
+                      final ord = _activeDriverOrders[index];
+                      final isSelected = (_selectedOrderFromList?.id == ord.id);
+
+                      return ListTile(
+                        leading: CircleAvatar(
+                          backgroundColor: isSelected ? AppColors.primary : AppColors.lightBg,
+                          child: Icon(Icons.local_shipping_rounded, color: isSelected ? Colors.white : AppColors.primary, size: 20),
+                        ),
+                        title: Text(ord.orderNumber, style: const TextStyle(fontWeight: FontWeight.bold)),
+                        subtitle: Text('${ord.customer} • ${ord.totalGallons} Gallons'),
+                        trailing: isSelected ? const Icon(Icons.check_circle_rounded, color: AppColors.successGreen) : null,
+                        onTap: () {
+                          setState(() => _selectedOrderFromList = ord);
+                          Navigator.pop(context);
+                        },
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
+    final activeOrder = widget.activeOrder ?? _selectedOrderFromList;
+
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
         statusBarColor: Color(0xFF0F2573),
@@ -3548,6 +3904,20 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
           ),
           actions: [
             IconButton(
+              icon: Icon(_isBatchScanMode ? Icons.dynamic_feed_rounded : Icons.crop_free_rounded, color: _isBatchScanMode ? const Color(0xFF38BDF8) : Colors.white),
+              tooltip: _isBatchScanMode ? 'Switch to Single Scan' : 'Switch to Batch Scan',
+              onPressed: () {
+                setState(() => _isBatchScanMode = !_isBatchScanMode);
+                DriverNotification.show(
+                  context,
+                  title: _isBatchScanMode ? 'BATCH SCAN MODE' : 'SINGLE SCAN MODE',
+                  message: _isBatchScanMode ? 'Continuous scanning enabled' : 'Single scan confirmation enabled',
+                  backgroundColor: AppColors.mediumBlue,
+                  icon: _isBatchScanMode ? Icons.dynamic_feed_rounded : Icons.crop_free_rounded,
+                );
+              },
+            ),
+            IconButton(
               icon: const Icon(Icons.flash_on, color: Colors.white),
               onPressed: () => _scannerController.toggleTorch(),
             ),
@@ -3555,12 +3925,12 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
               icon: const Icon(Icons.cameraswitch, color: Colors.white),
               onPressed: () => _scannerController.switchCamera(),
             ),
-            const SizedBox(width: 8),
+            const SizedBox(width: 4),
           ],
         ),
         body: Stack(
           children: [
-            // Camera Viewfinder Feed with Placeholder and Error Handlers
+            // Camera Viewfinder Feed
             MobileScanner(
               controller: _scannerController,
               onDetect: _onBarcodeDetected,
@@ -3633,68 +4003,109 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
               },
             ),
 
-            // Visual Scan Frame with Corner Brackets & Scan Guide
+            // Visual Scan Frame with Corner Brackets
             _buildScanFrame(),
 
-            // Instruction Header Overlay Card
+            // Top Header Overlay with Order / Customer Selector and Scan Mode Banner
             Positioned(
               top: 16,
               left: 16,
               right: 16,
-              child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
-                child: BackdropFilter(
-                  filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                  child: Container(
-                    padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 14),
-                    decoration: BoxDecoration(
-                      gradient: AppGradients.ocean,
-                      borderRadius: BorderRadius.circular(16),
-                      border: Border.all(color: Colors.white.withValues(alpha: 0.25), width: 1),
-                    ),
-                    child: Column(
-                      children: [
-                        const Row(
-                          mainAxisAlignment: MainAxisAlignment.center,
+              child: Column(
+                children: [
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(16),
+                    child: BackdropFilter(
+                      filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+                        decoration: BoxDecoration(
+                          gradient: AppGradients.ocean,
+                          borderRadius: BorderRadius.circular(16),
+                          border: Border.all(color: Colors.white.withValues(alpha: 0.25), width: 1),
+                        ),
+                        child: Column(
                           children: [
-                            Icon(Icons.qr_code_scanner, color: Color(0xFF38BDF8), size: 18),
-                            SizedBox(width: 8),
-                            Text(
-                              'Align Physical Gallon QR Tag within Frame',
-                              style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Row(
+                                  children: [
+                                    const Icon(Icons.qr_code_scanner, color: Color(0xFF38BDF8), size: 18),
+                                    const SizedBox(width: 8),
+                                    Text(
+                                      _isBatchScanMode ? 'Batch Scanning Mode' : 'Single Scan Mode',
+                                      style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+                                    ),
+                                  ],
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: _isBatchScanMode ? AppColors.successGreen : AppColors.mediumBlue,
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: Text(
+                                    _isBatchScanMode ? 'CONTINUOUS' : 'SINGLE',
+                                    style: const TextStyle(color: Colors.white, fontSize: 9, fontWeight: FontWeight.w900),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const SizedBox(height: 8),
+                            InkWell(
+                              onTap: _showOrderSelectionModal,
+                              borderRadius: BorderRadius.circular(10),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                                decoration: BoxDecoration(
+                                  color: AppColors.mediumBlue.withValues(alpha: 0.35),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(color: AppColors.mediumBlue.withValues(alpha: 0.6)),
+                                ),
+                                child: Row(
+                                  children: [
+                                    const Icon(Icons.person_pin_circle_rounded, color: Color(0xFF7DD3FC), size: 16),
+                                    const SizedBox(width: 6),
+                                    Expanded(
+                                      child: Text(
+                                        activeOrder != null
+                                            ? 'Target Customer: ${activeOrder.customer} (${activeOrder.orderNumber})'
+                                            : 'No active delivery selected (Tap to choose customer)',
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(color: Color(0xFF7DD3FC), fontSize: 11, fontWeight: FontWeight.bold),
+                                      ),
+                                    ),
+                                    const Icon(Icons.arrow_drop_down, color: Colors.white70, size: 18),
+                                  ],
+                                ),
+                              ),
                             ),
                           ],
                         ),
-                        if (widget.activeOrder != null) ...[
-                          const SizedBox(height: 8),
-                          Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                            decoration: BoxDecoration(
-                              color: AppColors.mediumBlue.withValues(alpha: 0.3),
-                              borderRadius: BorderRadius.circular(8),
-                              border: Border.all(color: AppColors.mediumBlue.withValues(alpha: 0.5)),
-                            ),
-                            child: Text(
-                              'Target Order: ${widget.activeOrder!.orderNumber} (${widget.activeOrder!.scannedGallons}/${widget.activeOrder!.totalGallons} Verified)',
-                              textAlign: TextAlign.center,
-                              style: const TextStyle(color: Color(0xFF7DD3FC), fontSize: 11, fontWeight: FontWeight.bold),
-                            ),
-                          ),
-                        ],
-                      ],
+                      ),
                     ),
                   ),
-                ),
+                ],
               ),
             ),
 
-            // Bottom Scan Result Display Card
-            if (_scanResultState != null)
+            // Bottom Real-time Status Overlay Result Card
+            if (_scanResultState != null && _latestToggleResult != null)
               Positioned(
-                bottom: 96,
+                bottom: _batchScannedList.isNotEmpty ? 130 : 24,
                 left: 16,
                 right: 16,
-                child: _buildResultCard(),
+                child: _buildResultOverlayCard(),
+              ),
+
+            // Batch Scanned Drawer at Bottom
+            if (_batchScannedList.isNotEmpty)
+              Positioned(
+                bottom: 16,
+                left: 16,
+                right: 16,
+                child: _buildBatchListBar(),
               ),
           ],
         ),
@@ -3711,7 +4122,6 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
         height: 260,
         child: Stack(
           children: [
-            // Inner Border Box
             Container(
               decoration: BoxDecoration(
                 borderRadius: BorderRadius.circular(20),
@@ -3721,71 +4131,50 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
                 ),
               ),
             ),
-            // Top Left Corner Bracket
+            // Top Left
             Positioned(
-              top: 0,
-              left: 0,
+              top: 0, left: 0,
               child: Container(
-                width: 32,
-                height: 32,
+                width: 32, height: 32,
                 decoration: BoxDecoration(
-                  border: Border(
-                    top: BorderSide(color: frameColor, width: 4),
-                    left: BorderSide(color: frameColor, width: 4),
-                  ),
+                  border: Border(top: BorderSide(color: frameColor, width: 4), left: BorderSide(color: frameColor, width: 4)),
                   borderRadius: const BorderRadius.only(topLeft: Radius.circular(20)),
                 ),
               ),
             ),
-            // Top Right Corner Bracket
+            // Top Right
             Positioned(
-              top: 0,
-              right: 0,
+              top: 0, right: 0,
               child: Container(
-                width: 32,
-                height: 32,
+                width: 32, height: 32,
                 decoration: BoxDecoration(
-                  border: Border(
-                    top: BorderSide(color: frameColor, width: 4),
-                    right: BorderSide(color: frameColor, width: 4),
-                  ),
+                  border: Border(top: BorderSide(color: frameColor, width: 4), right: BorderSide(color: frameColor, width: 4)),
                   borderRadius: const BorderRadius.only(topRight: Radius.circular(20)),
                 ),
               ),
             ),
-            // Bottom Left Corner Bracket
+            // Bottom Left
             Positioned(
-              bottom: 0,
-              left: 0,
+              bottom: 0, left: 0,
               child: Container(
-                width: 32,
-                height: 32,
+                width: 32, height: 32,
                 decoration: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(color: frameColor, width: 4),
-                    left: BorderSide(color: frameColor, width: 4),
-                  ),
+                  border: Border(bottom: BorderSide(color: frameColor, width: 4), left: BorderSide(color: frameColor, width: 4)),
                   borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(20)),
                 ),
               ),
             ),
-            // Bottom Right Corner Bracket
+            // Bottom Right
             Positioned(
-              bottom: 0,
-              right: 0,
+              bottom: 0, right: 0,
               child: Container(
-                width: 32,
-                height: 32,
+                width: 32, height: 32,
                 decoration: BoxDecoration(
-                  border: Border(
-                    bottom: BorderSide(color: frameColor, width: 4),
-                    right: BorderSide(color: frameColor, width: 4),
-                  ),
+                  border: Border(bottom: BorderSide(color: frameColor, width: 4), right: BorderSide(color: frameColor, width: 4)),
                   borderRadius: const BorderRadius.only(bottomRight: Radius.circular(20)),
                 ),
               ),
             ),
-            // Processing Indicator Feedback inside frame
             if (_isProcessingCode)
               const Center(
                 child: Column(
@@ -3801,7 +4190,7 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
                     ),
                     SizedBox(height: 12),
                     Text(
-                      'Verifying Gallon QR...',
+                      'Processing Gallon QR Code...',
                       style: TextStyle(
                         color: AppColors.warningAmber,
                         fontSize: 12,
@@ -3817,38 +4206,26 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
     );
   }
 
-  Widget _buildResultCard() {
-    Color bg;
-    Color fg;
-    IconData icon;
+  Widget _buildResultOverlayCard() {
+    if (_latestToggleResult == null) return const SizedBox.shrink();
 
-    switch (_scanResultState) {
-      case 'verified':
-        bg = AppColors.successBg;
-        fg = AppColors.successGreen;
-        icon = Icons.check_circle_rounded;
-        break;
-      case 'already_scanned':
-        bg = AppColors.warningBg;
-        fg = AppColors.warningAmber;
-        icon = Icons.warning_rounded;
-        break;
-      case 'not_found':
-      case 'error':
-      default:
-        bg = AppColors.errorBg;
-        fg = AppColors.errorRed;
-        icon = Icons.cancel_rounded;
-        break;
-    }
+    final gallonCode = _latestToggleResult!['gallon_code']?.toString() ?? '';
+    final newStatus = _latestToggleResult!['new_status']?.toString().toUpperCase() ?? '';
+    final prevStatus = _latestToggleResult!['previous_status']?.toString().toUpperCase() ?? '';
+    final customerName = _latestToggleResult!['customer_name']?.toString() ?? 'Station';
+    final notes = _latestToggleResult!['notes']?.toString() ?? '';
+    final isBorrowed = newStatus == 'BORROWED';
+
+    final fgColor = isBorrowed ? AppColors.successGreen : AppColors.mediumBlue;
+    final bgColor = isBorrowed ? AppColors.successBg : AppColors.lightBg;
 
     return Container(
-      padding: const EdgeInsets.all(20),
+      padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
         color: Colors.white,
-        borderRadius: BorderRadius.circular(24),
-        boxShadow: const [BoxShadow(color: Colors.black12, blurRadius: 20, offset: Offset(0, 10))],
-        border: Border.all(color: bg, width: 2),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 16, offset: Offset(0, 8))],
+        border: Border.all(color: fgColor, width: 2),
       ),
       child: Column(
         mainAxisSize: MainAxisSize.min,
@@ -3858,33 +4235,140 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
             children: [
               Container(
                 padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: bg, shape: BoxShape.circle),
-                child: Icon(icon, color: fg, size: 24),
+                decoration: BoxDecoration(color: bgColor, shape: BoxShape.circle),
+                child: Icon(isBorrowed ? Icons.outbox_rounded : Icons.inbox_rounded, color: fgColor, size: 22),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      _scanResultState == 'verified' ? 'Gallon Identified' : 'Scan Result',
-                      style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.grayText),
+                    Row(
+                      children: [
+                        Text('Gallon $gallonCode', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.darkText)),
+                        const SizedBox(width: 8),
+                        Container(
+                          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                          decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(6)),
+                          child: Text('$prevStatus ➔ $newStatus', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: fgColor)),
+                        ),
+                      ],
                     ),
+                    const SizedBox(height: 2),
                     Text(
-                      _scanResultText,
-                      style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold, color: fg),
+                      isBorrowed ? 'Lended to $customerName' : 'Returned to Station Inventory',
+                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: fgColor),
                     ),
                   ],
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.close, size: 20),
-                onPressed: () => setState(() => _scanResultState = null),
+                icon: const Icon(Icons.close, size: 18, color: AppColors.grayText),
+                onPressed: () => setState(() => _latestToggleResult = null),
               ),
             ],
           ),
+          const SizedBox(height: 8),
+          Text(
+            notes,
+            style: const TextStyle(fontSize: 11, color: AppColors.slateText, fontStyle: FontStyle.italic),
+          ),
         ],
       ),
+    );
+  }
+
+  Widget _buildBatchListBar() {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFF0F172A),
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.4)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.inventory_2_rounded, color: Color(0xFF38BDF8), size: 20),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              'Batch Session: ${_batchScannedList.length} Gallons Processed',
+              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
+            ),
+          ),
+          TextButton(
+            onPressed: () => _showBatchDetailsSheet(),
+            style: TextButton.styleFrom(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+              minimumSize: Size.zero,
+              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+            ),
+            child: const Text('VIEW ALL', style: TextStyle(color: Color(0xFF38BDF8), fontWeight: FontWeight.bold, fontSize: 12)),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _showBatchDetailsSheet() {
+    showModalBottomSheet(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      builder: (context) {
+        return Container(
+          padding: const EdgeInsets.all(20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                children: [
+                  Text('Batch Scanned Gallons (${_batchScannedList.length})', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.navy)),
+                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
+                ],
+              ),
+              const SizedBox(height: 10),
+              Flexible(
+                child: ListView.separated(
+                  shrinkWrap: true,
+                  itemCount: _batchScannedList.length,
+                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  itemBuilder: (context, index) {
+                    final item = _batchScannedList[index];
+                    final code = item['gallon_code'] ?? 'N/A';
+                    final newSt = item['new_status']?.toString().toUpperCase() ?? '';
+                    final prevSt = item['previous_status']?.toString().toUpperCase() ?? '';
+                    final isBorrowed = newSt == 'BORROWED';
+
+                    return ListTile(
+                      contentPadding: EdgeInsets.zero,
+                      leading: CircleAvatar(
+                        backgroundColor: isBorrowed ? AppColors.successBg : AppColors.lightBg,
+                        child: Icon(isBorrowed ? Icons.outbox_rounded : Icons.inbox_rounded, color: isBorrowed ? AppColors.successGreen : AppColors.mediumBlue, size: 18),
+                      ),
+                      title: Text('Gallon $code', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
+                      subtitle: Text(item['notes'] ?? '', style: const TextStyle(fontSize: 11, color: AppColors.slateText)),
+                      trailing: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                        decoration: BoxDecoration(
+                          color: isBorrowed ? AppColors.successBg : AppColors.lightBg,
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        child: Text(
+                          '$prevSt ➔ $newSt',
+                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: isBorrowed ? AppColors.successGreen : AppColors.mediumBlue),
+                        ),
+                      ),
+                    );
+                  },
+                ),
+              ),
+            ],
+          ),
+        );
+      },
     );
   }
 }
@@ -5184,6 +5668,7 @@ class _TaskActionPageState extends State<TaskActionPage> {
   Timer? _timer;
   Duration _elapsed = Duration.zero;
   Position? _driverPos;
+  Uint8List? _cachedSignatureBytes;
 
   @override
   void initState() {
@@ -5198,6 +5683,8 @@ class _TaskActionPageState extends State<TaskActionPage> {
   Future<void> _loadPersistedScans() async {
     await ScannedItemsManager.instance.init();
     final keys = [widget.order.orderId, widget.order.id, widget.order.orderNumber].where((k) => k.isNotEmpty).toList();
+
+    // 1. Scanned Gallons
     List<ScannedGallonItem> savedItems = [];
     for (var k in keys) {
       final items = ScannedItemsManager.instance.getScannedForOrder(k);
@@ -5210,14 +5697,37 @@ class _TaskActionPageState extends State<TaskActionPage> {
     if (savedItems.isNotEmpty && mounted) {
       setState(() {
         for (var item in savedItems) {
-          if (item.id.isNotEmpty) {
-            widget.order.verifiedGallonIds.add(item.id);
-          }
-          if (item.gallonCode.isNotEmpty) {
-            widget.order.verifiedGallonCodes.add(item.gallonCode);
-          }
+          final idToAdd = item.id.isNotEmpty ? item.id : item.gallonCode;
+          final codeToAdd = item.gallonCode.isNotEmpty ? item.gallonCode : item.id;
+          if (idToAdd.isNotEmpty) widget.order.verifiedGallonIds.add(idToAdd);
+          if (codeToAdd.isNotEmpty) widget.order.verifiedGallonCodes.add(codeToAdd);
         }
       });
+    }
+
+    // 2. POD Photo Cache
+    for (var k in keys) {
+      final podBytes = await ScannedItemsManager.instance.getPodPhotoCache(k);
+      if (podBytes != null && mounted) {
+        setState(() {
+          widget.order.podImageBytes = podBytes;
+        });
+        break;
+      }
+    }
+
+    // 3. Signature Cache
+    for (var k in keys) {
+      final sigCache = await ScannedItemsManager.instance.getSignatureCache(k);
+      if (sigCache != null && mounted) {
+        setState(() {
+          widget.order.signatureData = sigCache['sigData'] as String?;
+          if (sigCache['sigBytes'] != null) {
+            _cachedSignatureBytes = sigCache['sigBytes'] as Uint8List;
+          }
+        });
+        break;
+      }
     }
   }
 
@@ -5253,13 +5763,84 @@ class _TaskActionPageState extends State<TaskActionPage> {
   }
 
   Future<void> _takePodPhoto() async {
-    final picker = ImagePicker();
-    final photo = await picker.pickImage(source: ImageSource.camera, imageQuality: 50);
-    if (photo != null) {
-      final bytes = await photo.readAsBytes();
-      setState(() {
-        widget.order.podImageBytes = bytes;
-      });
+    final source = await showModalBottomSheet<ImageSource>(
+      context: context,
+      backgroundColor: AppColors.surface,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 20, horizontal: 16),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'PROOF OF DELIVERY PHOTO',
+                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.darkNavy),
+              ),
+              const SizedBox(height: 6),
+              const Text(
+                'Select camera or gallery to capture proof photo',
+                style: TextStyle(fontSize: 12, color: AppColors.grayText),
+              ),
+              const SizedBox(height: 20),
+              Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton.icon(
+                      icon: const Icon(Icons.camera_alt_rounded),
+                      label: const Text('CAMERA'),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: AppColors.primary,
+                        foregroundColor: Colors.white,
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () => Navigator.pop(ctx, ImageSource.camera),
+                    ),
+                  ),
+                  const SizedBox(width: 12),
+                  Expanded(
+                    child: OutlinedButton.icon(
+                      icon: const Icon(Icons.photo_library_rounded),
+                      label: const Text('GALLERY'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: AppColors.primary,
+                        side: const BorderSide(color: AppColors.primary),
+                        padding: const EdgeInsets.symmetric(vertical: 14),
+                        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+                      ),
+                      onPressed: () => Navigator.pop(ctx, ImageSource.gallery),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    if (source == null) return;
+
+    try {
+      final picker = ImagePicker();
+      final photo = await picker.pickImage(source: source, imageQuality: 70);
+      if (photo != null) {
+        final bytes = await photo.readAsBytes();
+        setState(() {
+          widget.order.podImageBytes = bytes;
+        });
+
+        // Persist POD Photo in cache for back-navigation recovery
+        final keys = [widget.order.orderId, widget.order.id, widget.order.orderNumber].where((k) => k.isNotEmpty).toList();
+        for (var k in keys) {
+          await ScannedItemsManager.instance.savePodPhotoCache(k, bytes);
+        }
+      }
+    } catch (e) {
+      _showWarning('Error selecting photo: $e');
     }
   }
 
@@ -5290,7 +5871,16 @@ class _TaskActionPageState extends State<TaskActionPage> {
               if (_sigController.isNotEmpty) {
                 final export = await _sigController.toPngBytes();
                 if (export != null) {
-                  setState(() => widget.order.signatureData = 'signed');
+                  setState(() {
+                    widget.order.signatureData = 'signed';
+                    _cachedSignatureBytes = export;
+                  });
+
+                  // Persist Signature in cache for back-navigation recovery
+                  final keys = [widget.order.orderId, widget.order.id, widget.order.orderNumber].where((k) => k.isNotEmpty).toList();
+                  for (var k in keys) {
+                    await ScannedItemsManager.instance.saveSignatureCache(k, 'signed', export);
+                  }
                 }
                 if (!context.mounted) return;
                 Navigator.pop(context);
@@ -5309,6 +5899,39 @@ class _TaskActionPageState extends State<TaskActionPage> {
         _showWarning('Verify all gallons first.');
         return;
       }
+
+      if (widget.order.podImageBytes == null) {
+        await _takePodPhoto();
+        if (widget.order.podImageBytes == null) {
+          if (!mounted) return;
+          final proceed = await showDialog<bool>(
+            context: context,
+            builder: (ctx) => AlertDialog(
+              backgroundColor: AppColors.surface,
+              title: const Text('No Photo Selected', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.darkNavy, fontSize: 16)),
+              content: const Text(
+                'Are you sure you want to complete this delivery without attaching a Proof of Delivery photo?',
+                style: TextStyle(fontSize: 13, color: AppColors.grayText),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(ctx, false),
+                  child: const Text('CAPTURE PHOTO', style: TextStyle(color: AppColors.primary, fontWeight: FontWeight.bold)),
+                ),
+                ElevatedButton(
+                  style: ElevatedButton.styleFrom(backgroundColor: AppColors.successGreen),
+                  onPressed: () => Navigator.pop(ctx, true),
+                  child: const Text('CONTINUE', style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold)),
+                ),
+              ],
+            ),
+          );
+
+          if (proceed == false) {
+            await _takePodPhoto();
+          }
+        }
+      }
     }
 
     setState(() => _isUpdating = true);
@@ -5322,12 +5945,21 @@ class _TaskActionPageState extends State<TaskActionPage> {
         String? podUrl;
         if (widget.order.podImageBytes != null) {
           final bytes = widget.order.podImageBytes!;
-          final fileName = '${DateTime.now().millisecondsSinceEpoch}.jpg';
+          final fileName = 'pod_${widget.order.orderId.isNotEmpty ? widget.order.orderId : widget.order.id}_${DateTime.now().millisecondsSinceEpoch}.jpg';
           podUrl = await SupabaseService.uploadPodPhoto(
             deliveryId: widget.order.id,
+            orderId: widget.order.orderId,
             bytes: bytes,
             fileName: fileName,
           );
+
+          if (podUrl.isNotEmpty) {
+            await SupabaseService.saveProofOfDelivery(
+              deliveryId: widget.order.id,
+              orderId: widget.order.orderId,
+              proofUrl: podUrl,
+            );
+          }
         }
 
         String? sigUrl;
@@ -5372,6 +6004,11 @@ class _TaskActionPageState extends State<TaskActionPage> {
 
       if (newStatus == 'delivered') {
         _timer?.cancel();
+        // Clear order cache on successful delivery
+        final keys = [widget.order.orderId, widget.order.id, widget.order.orderNumber].where((k) => k.isNotEmpty).toList();
+        for (var k in keys) {
+          await ScannedItemsManager.instance.clearOrderCache(k);
+        }
         if (mounted) Navigator.pop(context, true);
       }
     } catch (e) {
@@ -5552,6 +6189,8 @@ class _TaskActionPageState extends State<TaskActionPage> {
 
   Widget _verificationCard() {
     final verified = widget.order.scannedGallons >= widget.order.totalGallons;
+    final hasScans = widget.order.scannedGallons > 0 || widget.order.verifiedGallonCodes.isNotEmpty;
+
     return GlassCard(
       padding: const EdgeInsets.all(20),
       borderRadius: 16,
@@ -5561,7 +6200,34 @@ class _TaskActionPageState extends State<TaskActionPage> {
           Row(
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
-              const Text('SCAN VERIFICATION', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.grayText)),
+              Row(
+                children: [
+                  const Text('SCAN VERIFICATION', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.grayText)),
+                  if (hasScans) ...[
+                    const SizedBox(width: 8),
+                    InkWell(
+                      onTap: _showScannedGallonsInfoDialog,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                        decoration: BoxDecoration(
+                          color: AppColors.primary.withValues(alpha: 0.1),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: AppColors.primary.withValues(alpha: 0.3)),
+                        ),
+                        child: const Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            Icon(Icons.info_outline_rounded, size: 13, color: AppColors.primary),
+                            SizedBox(width: 3),
+                            Text('INFO', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.primary)),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ],
+              ),
               Text('${widget.order.scannedGallons}/${widget.order.totalGallons}', style: TextStyle(fontWeight: FontWeight.bold, color: verified ? AppColors.successGreen : AppColors.primary)),
             ],
           ),
@@ -5576,11 +6242,19 @@ class _TaskActionPageState extends State<TaskActionPage> {
             ),
           ] else ...[
             const SizedBox(height: 12),
-            const Row(
+            Row(
               children: [
-                Icon(Icons.check_circle, color: AppColors.successGreen, size: 16),
-                SizedBox(width: 8),
-                Text('All gallons verified successfully', style: TextStyle(fontSize: 12, color: AppColors.successGreen, fontWeight: FontWeight.w500)),
+                const Icon(Icons.check_circle, color: AppColors.successGreen, size: 16),
+                const SizedBox(width: 8),
+                const Expanded(
+                  child: Text('All gallons verified successfully', style: TextStyle(fontSize: 12, color: AppColors.successGreen, fontWeight: FontWeight.w500)),
+                ),
+                TextButton.icon(
+                  onPressed: _showScannedGallonsInfoDialog,
+                  icon: const Icon(Icons.info_outline_rounded, size: 14, color: AppColors.primary),
+                  label: const Text('View Info', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.primary)),
+                  style: TextButton.styleFrom(padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2), minimumSize: Size.zero, tapTargetSize: MaterialTapTargetSize.shrinkWrap),
+                ),
               ],
             ),
             const SizedBox(height: 14),
@@ -5596,6 +6270,15 @@ class _TaskActionPageState extends State<TaskActionPage> {
                       action: 'borrow',
                     );
                   }
+                  if (mounted) {
+                    DriverNotification.show(
+                      context,
+                      title: 'BORROWED CONFIRMED',
+                      message: 'Gallon borrowing status recorded successfully!',
+                      backgroundColor: AppColors.successGreen,
+                      icon: Icons.check_circle_outline,
+                    );
+                  }
                 } catch (e) {
                   _showWarning('Error saving gallon status: $e');
                 } finally {
@@ -5608,6 +6291,275 @@ class _TaskActionPageState extends State<TaskActionPage> {
         ],
       ),
     );
+  }
+
+  void _showScannedGallonsInfoDialog() {
+    final keys = [widget.order.orderId, widget.order.id, widget.order.orderNumber].where((k) => k.isNotEmpty).toList();
+    List<ScannedGallonItem> scannedItems = [];
+    for (var k in keys) {
+      final items = ScannedItemsManager.instance.getScannedForOrder(k);
+      if (items.isNotEmpty) {
+        scannedItems = items;
+        break;
+      }
+    }
+
+    if (scannedItems.isEmpty && widget.order.verifiedGallonCodes.isNotEmpty) {
+      scannedItems = widget.order.verifiedGallonCodes.map((code) {
+        return ScannedGallonItem(
+          id: code,
+          gallonCode: code,
+          orderId: widget.order.orderId,
+          orderNumber: widget.order.orderNumber,
+          scannedAt: DateTime.now(),
+          status: 'verified',
+          customerName: widget.order.customer,
+          deliveryAddress: widget.order.address,
+        );
+      }).toList();
+    }
+
+    showDialog(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        backgroundColor: AppColors.surface,
+        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(20)),
+        titlePadding: const EdgeInsets.fromLTRB(20, 20, 20, 10),
+        contentPadding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+        title: Row(
+          children: [
+            const Icon(Icons.qr_code_2_rounded, color: AppColors.primary, size: 24),
+            const SizedBox(width: 10),
+            const Expanded(
+              child: Text(
+                'Gallon Verification Info',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.darkNavy),
+              ),
+            ),
+            IconButton(
+              icon: const Icon(Icons.close_rounded, size: 20, color: AppColors.grayText),
+              onPressed: () => Navigator.pop(ctx),
+            ),
+          ],
+        ),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Container(
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: AppColors.primary.withValues(alpha: 0.06),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: AppColors.primary.withValues(alpha: 0.15)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.person_outline_rounded, color: AppColors.primary, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text(
+                            widget.order.customer,
+                            style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.darkNavy),
+                          ),
+                          Text(
+                            'Order #${widget.order.orderNumber}',
+                            style: const TextStyle(fontSize: 11, color: AppColors.slateText),
+                          ),
+                        ],
+                      ),
+                    ),
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
+                      decoration: BoxDecoration(
+                        color: AppColors.successBg,
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Text(
+                        '${widget.order.scannedGallons}/${widget.order.totalGallons} Verified',
+                        style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.successGreen),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(height: 14),
+              if (scannedItems.isEmpty)
+                const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 20),
+                  child: Center(
+                    child: Text(
+                      'No scanned gallons found yet.\nScan a gallon tag to view details here.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(color: AppColors.grayText, fontSize: 13),
+                    ),
+                  ),
+                )
+              else
+                Flexible(
+                  child: ListView.separated(
+                    shrinkWrap: true,
+                    itemCount: scannedItems.length,
+                    separatorBuilder: (_, __) => const SizedBox(height: 10),
+                    itemBuilder: (context, index) {
+                      final item = scannedItems[index];
+                      final timeStr = DateFormat('MMM dd, yyyy • hh:mm a').format(item.scannedAt);
+                      final displayName = item.customerName.isNotEmpty ? item.customerName : widget.order.customer;
+
+                      return Container(
+                        padding: const EdgeInsets.all(14),
+                        decoration: BoxDecoration(
+                          color: Colors.white,
+                          borderRadius: BorderRadius.circular(14),
+                          border: Border.all(color: AppColors.border),
+                          boxShadow: [
+                            BoxShadow(
+                              color: Colors.black.withValues(alpha: 0.03),
+                              blurRadius: 8,
+                              offset: const Offset(0, 2),
+                            ),
+                          ],
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(8),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.successBg,
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(Icons.verified_rounded, color: AppColors.successGreen, size: 18),
+                                ),
+                                const SizedBox(width: 10),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        item.gallonCode,
+                                        style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14, color: AppColors.darkNavy),
+                                      ),
+                                      const SizedBox(height: 2),
+                                      Text(
+                                        'Assigned: $displayName',
+                                        style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w600, color: AppColors.primary),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                Container(
+                                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                                  decoration: BoxDecoration(
+                                    color: AppColors.successBg,
+                                    borderRadius: BorderRadius.circular(6),
+                                  ),
+                                  child: const Text(
+                                    'VERIFIED',
+                                    style: TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: AppColors.successGreen),
+                                  ),
+                                ),
+                              ],
+                            ),
+                            const Divider(height: 16),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                              children: [
+                                Row(
+                                  children: [
+                                    const Icon(Icons.access_time_rounded, size: 12, color: AppColors.grayText),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      timeStr,
+                                      style: const TextStyle(fontSize: 10, color: AppColors.grayText),
+                                    ),
+                                  ],
+                                ),
+                                OutlinedButton.icon(
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: AppColors.errorRed,
+                                    side: const BorderSide(color: AppColors.errorRed, width: 1.2),
+                                    padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                                    minimumSize: Size.zero,
+                                    tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                                    shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
+                                  ),
+                                  icon: const Icon(Icons.refresh_rounded, size: 14),
+                                  label: const Text('RETAKE', style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold)),
+                                  onPressed: () {
+                                    Navigator.pop(ctx);
+                                    _retakeScannedGallon(item);
+                                  },
+                                ),
+                              ],
+                            ),
+                          ],
+                        ),
+                      );
+                    },
+                  ),
+                ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx),
+            child: const Text('CLOSE', style: TextStyle(fontWeight: FontWeight.bold, color: AppColors.grayText)),
+          ),
+          ElevatedButton.icon(
+            style: ElevatedButton.styleFrom(
+              backgroundColor: AppColors.primary,
+              foregroundColor: Colors.white,
+              padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
+            ),
+            icon: const Icon(Icons.qr_code_scanner_rounded, size: 16),
+            label: const Text('SCAN GALLON', style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold)),
+            onPressed: () {
+              Navigator.pop(ctx);
+              _openInPageScanner();
+            },
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _retakeScannedGallon(ScannedGallonItem item) async {
+    setState(() {
+      widget.order.verifiedGallonIds.remove(item.id);
+      widget.order.verifiedGallonIds.remove(item.gallonCode);
+      widget.order.verifiedGallonCodes.remove(item.gallonCode);
+      widget.order.verifiedGallonCodes.remove(item.id);
+    });
+
+    final keys = [widget.order.orderId, widget.order.id, widget.order.orderNumber].where((k) => k.isNotEmpty).toList();
+    for (var k in keys) {
+      await ScannedItemsManager.instance.removeScannedItem(item.gallonCode, orderId: k);
+      if (item.id.isNotEmpty) {
+        await ScannedItemsManager.instance.removeScannedItem(item.id, orderId: k);
+      }
+    }
+
+    if (mounted) {
+      DriverNotification.show(
+        context,
+        title: 'RETAKE SCAN',
+        message: 'Gallon tag ${item.gallonCode} removed. Opening scanner...',
+        backgroundColor: AppColors.warningAmber,
+        icon: Icons.qr_code_scanner_rounded,
+      );
+
+      _openInPageScanner();
+    }
   }
 
   void _openInPageScanner() {
@@ -5738,28 +6690,39 @@ class _TaskActionPageState extends State<TaskActionPage> {
   Future<void> _processScannedCode(String rawCode) async {
     setState(() => _isUpdating = true);
     try {
-      final gallonRecord = await SupabaseService.verifyGallon(rawCode);
+      final gallonRecord = await SupabaseService.fetchContainerByCode(rawCode);
       if (gallonRecord != null) {
         final gallonId = gallonRecord['id']?.toString() ?? '';
-        
-        if (widget.order.verifiedGallonIds.contains(gallonId)) {
-          _showWarning('Gallon already scanned.');
+        final gallonCode = gallonRecord['gallon_code']?.toString() ?? rawCode;
+        final currentStatus = gallonRecord['status']?.toString() ?? 'available';
+
+        if (widget.order.verifiedGallonIds.contains(gallonId) || widget.order.verifiedGallonCodes.contains(gallonCode)) {
+          _showWarning('Gallon $gallonCode already scanned for this order.');
         } else {
+          final toggleResult = await SupabaseService.executeGallonStatusToggle(
+            gallonId: gallonId,
+            gallonCode: gallonCode,
+            currentStatus: currentStatus,
+            customerId: widget.order.customerId,
+            customerName: widget.order.customer,
+            orderId: widget.order.orderId,
+          );
+
           setState(() {
-            widget.order.verifiedGallonIds.add(gallonId);
-            widget.order.verifiedGallonCodes.add(rawCode);
+            widget.order.verifiedGallonIds.add(gallonId.isNotEmpty ? gallonId : gallonCode);
+            widget.order.verifiedGallonCodes.add(gallonCode);
           });
 
           final keys = [widget.order.orderId, widget.order.id, widget.order.orderNumber].where((k) => k.isNotEmpty).toList();
           for (var k in keys) {
             await ScannedItemsManager.instance.saveScannedItem(
               ScannedGallonItem(
-                id: gallonId,
-                gallonCode: rawCode,
+                id: gallonId.isNotEmpty ? gallonId : gallonCode,
+                gallonCode: gallonCode,
                 orderId: k,
                 orderNumber: widget.order.orderNumber,
                 scannedAt: DateTime.now(),
-                status: gallonRecord['status']?.toString() ?? 'borrowed',
+                status: toggleResult['new_status'] ?? 'borrowed',
                 customerName: widget.order.customer,
                 deliveryAddress: widget.order.address,
               ),
@@ -5769,20 +6732,20 @@ class _TaskActionPageState extends State<TaskActionPage> {
           if (mounted) {
             DriverNotification.show(
               context,
-              title: 'VERIFIED',
-              message: 'Gallon Verified ✓',
+              title: toggleResult['new_status'] == 'borrowed' ? 'BORROWED & VERIFIED' : 'RETURNED',
+              message: toggleResult['display_message'] ?? 'Gallon $gallonCode verified ✓',
               backgroundColor: AppColors.successGreen,
-              icon: Icons.verified_user_outlined,
+              icon: Icons.check_circle_outline,
             );
           }
         }
       } else {
-        _showWarning('Gallon not found in database.');
+        _showWarning('Unregistered Gallon QR Code ($rawCode)');
       }
     } catch (e) {
-      _showWarning('Error: $e');
+      _showWarning('Error scanning gallon: $e');
     } finally {
-      setState(() => _isUpdating = false);
+      if (mounted) setState(() => _isUpdating = false);
     }
   }
 
@@ -5818,9 +6781,61 @@ class _TaskActionPageState extends State<TaskActionPage> {
           ),
           if (widget.order.podImageBytes != null) ...[
             const SizedBox(height: 12),
-            ClipRRect(
-              borderRadius: BorderRadius.circular(12),
-              child: Image.memory(widget.order.podImageBytes!, height: 120, width: double.infinity, fit: BoxFit.cover),
+            Stack(
+              children: [
+                ClipRRect(
+                  borderRadius: BorderRadius.circular(12),
+                  child: Image.memory(widget.order.podImageBytes!, height: 120, width: double.infinity, fit: BoxFit.cover),
+                ),
+                Positioned(
+                  top: 8,
+                  right: 8,
+                  child: CircleAvatar(
+                    radius: 16,
+                    backgroundColor: Colors.black.withValues(alpha: 0.6),
+                    child: IconButton(
+                      icon: const Icon(Icons.refresh_rounded, color: Colors.white, size: 16),
+                      padding: EdgeInsets.zero,
+                      tooltip: 'Retake Photo',
+                      onPressed: _takePodPhoto,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+          if (_cachedSignatureBytes != null) ...[
+            const SizedBox(height: 12),
+            Stack(
+              children: [
+                Container(
+                  height: 90,
+                  width: double.infinity,
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    borderRadius: BorderRadius.circular(12),
+                    border: Border.all(color: AppColors.successGreen.withValues(alpha: 0.5)),
+                  ),
+                  child: ClipRRect(
+                    borderRadius: BorderRadius.circular(12),
+                    child: Image.memory(_cachedSignatureBytes!, fit: BoxFit.contain),
+                  ),
+                ),
+                Positioned(
+                  top: 6,
+                  right: 6,
+                  child: CircleAvatar(
+                    radius: 14,
+                    backgroundColor: Colors.black.withValues(alpha: 0.6),
+                    child: IconButton(
+                      icon: const Icon(Icons.refresh_rounded, color: Colors.white, size: 14),
+                      padding: EdgeInsets.zero,
+                      tooltip: 'Re-sign',
+                      onPressed: _showSignaturePad,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ],

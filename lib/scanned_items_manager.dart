@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -111,7 +112,7 @@ class ScannedItemsManager {
     await init();
     final currentList = List<ScannedGallonItem>.from(itemsNotifier.value);
     currentList.removeWhere((item) =>
-        item.gallonCode == gallonCode && (orderId == null || item.orderId == orderId));
+        (item.gallonCode == gallonCode || item.id == gallonCode) && (orderId == null || orderId.isEmpty || item.orderId == orderId));
     itemsNotifier.value = currentList;
     await _persist();
   }
@@ -142,5 +143,80 @@ class ScannedItemsManager {
     await init();
     itemsNotifier.value = [];
     await _persist();
+  }
+
+  // --- POD Photo & Signature Cache ---
+  Future<void> savePodPhotoCache(String orderId, Uint8List bytes) async {
+    if (orderId.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final base64Str = base64Encode(bytes);
+      await prefs.setString('aquasync_pod_photo_$orderId', base64Str);
+    } catch (e) {
+      debugPrint('Error saving POD photo cache: $e');
+    }
+  }
+
+  Future<Uint8List?> getPodPhotoCache(String orderId) async {
+    if (orderId.isEmpty) return null;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final base64Str = prefs.getString('aquasync_pod_photo_$orderId');
+      if (base64Str != null && base64Str.isNotEmpty) {
+        return base64Decode(base64Str);
+      }
+    } catch (e) {
+      debugPrint('Error loading POD photo cache: $e');
+    }
+    return null;
+  }
+
+  Future<void> saveSignatureCache(String orderId, String sigData, [Uint8List? sigBytes]) async {
+    if (orderId.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString('aquasync_sig_data_$orderId', sigData);
+      if (sigBytes != null) {
+        final base64Str = base64Encode(sigBytes);
+        await prefs.setString('aquasync_sig_bytes_$orderId', base64Str);
+      }
+    } catch (e) {
+      debugPrint('Error saving Signature cache: $e');
+    }
+  }
+
+  Future<Map<String, dynamic>?> getSignatureCache(String orderId) async {
+    if (orderId.isEmpty) return null;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final sigData = prefs.getString('aquasync_sig_data_$orderId');
+      final sigBytesStr = prefs.getString('aquasync_sig_bytes_$orderId');
+      Uint8List? sigBytes;
+      if (sigBytesStr != null && sigBytesStr.isNotEmpty) {
+        sigBytes = base64Decode(sigBytesStr);
+      }
+      if (sigData != null || sigBytes != null) {
+        return {
+          'sigData': sigData ?? 'signed',
+          'sigBytes': sigBytes,
+        };
+      }
+    } catch (e) {
+      debugPrint('Error loading Signature cache: $e');
+    }
+    return null;
+  }
+
+  Future<void> clearOrderCache(String orderId) async {
+    if (orderId.isEmpty) return;
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove('aquasync_pod_photo_$orderId');
+      await prefs.remove('aquasync_sig_data_$orderId');
+      await prefs.remove('aquasync_sig_bytes_$orderId');
+      await clearScansForOrder(orderId);
+    } catch (e) {
+      debugPrint('Error clearing order cache: $e');
+    }
   }
 }

@@ -247,7 +247,13 @@ class SupabaseService {
   }
 
   // Authoritative Delivery Status Update via public.driver_update_delivery_status
-  static Future<bool> updateDeliveryStatus(String deliveryId, String status, {String? currentStatus}) async {
+  static Future<bool> updateDeliveryStatus(
+    String deliveryId,
+    String status, {
+    String? currentStatus,
+    String? proofUrl,
+    String? notes,
+  }) async {
     final newStatus = status.toLowerCase();
 
     // Canonical status transition validation
@@ -267,60 +273,186 @@ class SupabaseService {
       }
     }
 
+    // 1. Try RPC update first (if defined on DB schema)
     try {
-      await client.rpc('driver_update_delivery_status', params: {
+      final Map<String, dynamic> rpcParams = {
         'delivery_id': deliveryId,
         'status': newStatus,
-      });
-      return true;
+      };
+      if (proofUrl != null && proofUrl.isNotEmpty) {
+        rpcParams['proof_url'] = proofUrl;
+      }
+      await client.rpc('driver_update_delivery_status', params: rpcParams);
     } catch (e) {
-      debugPrint('RPC driver_update_delivery_status error: $e, falling back to direct table update');
+      debugPrint('RPC driver_update_delivery_status error/info: $e');
+    }
+
+    // 2. Direct table update to deliveries
+    try {
+      final Map<String, dynamic> deliveryUpdates = {
+        'status': newStatus,
+        if (newStatus == 'accepted') 'accepted_at': DateTime.now().toIso8601String(),
+        if (newStatus == 'out_for_delivery') 'started_at': DateTime.now().toIso8601String(),
+        if (newStatus == 'delivered') 'delivered_at': DateTime.now().toIso8601String(),
+      };
+      if (proofUrl != null && proofUrl.isNotEmpty) {
+        deliveryUpdates['proof_url'] = proofUrl;
+      }
+      if (notes != null && notes.isNotEmpty) {
+        deliveryUpdates['notes'] = notes;
+      }
+
+      await client
+          .from('deliveries')
+          .update(deliveryUpdates)
+          .eq('id', deliveryId);
+    } catch (e) {
+      debugPrint('Direct update to deliveries status error: $e');
       try {
-        final Map<String, dynamic> deliveryUpdates = {
+        await client.from('deliveries').update({
           'status': newStatus,
-          if (newStatus == 'accepted') 'accepted_at': DateTime.now().toIso8601String(),
-          if (newStatus == 'out_for_delivery') 'started_at': DateTime.now().toIso8601String(),
           if (newStatus == 'delivered') 'delivered_at': DateTime.now().toIso8601String(),
-        };
-
-        final deliveryRecord = await client
-            .from('deliveries')
-            .update(deliveryUpdates)
-            .eq('id', deliveryId)
-            .select('order_id')
-            .maybeSingle();
-
-        if (deliveryRecord != null && deliveryRecord['order_id'] != null) {
-          final orderId = deliveryRecord['order_id'].toString();
-          await client
-              .from('orders')
-              .update({'status': newStatus})
-              .eq('id', orderId);
-        }
-
-        return true;
-      } catch (fallbackError) {
-        debugPrint('Direct update fallback error: $fallbackError');
-        rethrow;
+        }).eq('id', deliveryId);
+      } catch (err2) {
+        debugPrint('Fallback update to deliveries error: $err2');
       }
     }
+
+    // 3. Direct table update to orders
+    try {
+      final delRecord = await client
+          .from('deliveries')
+          .select('order_id')
+          .eq('id', deliveryId)
+          .maybeSingle();
+
+      if (delRecord != null && delRecord['order_id'] != null) {
+        final orderId = delRecord['order_id'].toString();
+
+        try {
+          final Map<String, dynamic> orderUpdates = {
+            'status': newStatus,
+            'order_status': newStatus,
+            if (newStatus == 'delivered') 'delivered_at': DateTime.now().toIso8601String(),
+          };
+          if (proofUrl != null && proofUrl.isNotEmpty) {
+            orderUpdates['proof_url'] = proofUrl;
+          }
+          await client.from('orders').update(orderUpdates).eq('id', orderId);
+        } catch (_) {
+          try {
+            await client.from('orders').update({
+              'order_status': newStatus,
+            }).eq('id', orderId);
+          } catch (_) {
+            try {
+              await client.from('orders').update({
+                'status': newStatus,
+              }).eq('id', orderId);
+            } catch (_) {}
+          }
+        }
+      }
+    } catch (e) {
+      debugPrint('Error syncing orders status: $e');
+    }
+
+    return true;
   }
 
   // --- STORAGE & FULFILLMENT (POD PHOTO & SIGNATURE) ---
   static Future<String> uploadPodPhoto({
     required String deliveryId,
     required Uint8List bytes,
-    required String fileName,
+    String? orderId,
+    String? fileName,
   }) async {
-    final filePath = 'pod/$deliveryId/pod_$fileName';
-    await client.storage.from('pod').uploadBinary(
-      filePath,
-      bytes,
-      fileOptions: const FileOptions(cacheControl: '3600', upsert: true),
-    );
+    final timestamp = DateTime.now().millisecondsSinceEpoch;
+    final ordId = (orderId != null && orderId.isNotEmpty) ? orderId : deliveryId;
+    final name = fileName ?? 'pod_${ordId}_$timestamp.jpg';
+    final filePath = name;
 
-    final signedUrl = await client.storage.from('pod').createSignedUrl(filePath, 86400 * 365);
-    return signedUrl;
+    // Primary bucket 'proofs' per Driver POD Photo requirements
+    try {
+      await client.storage.from('proofs').uploadBinary(
+        filePath,
+        bytes,
+        fileOptions: const FileOptions(cacheControl: '3600', upsert: true),
+      );
+      final publicUrl = client.storage.from('proofs').getPublicUrl(filePath);
+      return publicUrl;
+    } catch (e) {
+      debugPrint('Error uploading to proofs bucket: $e. Retrying with fallback buckets...');
+      try {
+        await client.storage.from('deliveries').uploadBinary(
+          filePath,
+          bytes,
+          fileOptions: const FileOptions(cacheControl: '3600', upsert: true),
+        );
+        return client.storage.from('deliveries').getPublicUrl(filePath);
+      } catch (_) {
+        await client.storage.from('pod').uploadBinary(
+          filePath,
+          bytes,
+          fileOptions: const FileOptions(cacheControl: '3600', upsert: true),
+        );
+        return client.storage.from('pod').getPublicUrl(filePath);
+      }
+    }
+  }
+
+  static Future<void> saveProofOfDelivery({
+    required String deliveryId,
+    required String orderId,
+    required String proofUrl,
+    String? notes,
+  }) async {
+    final nowIso = DateTime.now().toIso8601String();
+
+    // 1. Update deliveries table
+    if (deliveryId.isNotEmpty) {
+      try {
+        final Map<String, dynamic> delUpdates = {
+          'status': 'delivered',
+          'proof_url': proofUrl,
+          'delivered_at': nowIso,
+        };
+        if (notes != null && notes.trim().isNotEmpty) {
+          delUpdates['notes'] = notes.trim();
+        }
+        await client.from('deliveries').update(delUpdates).eq('id', deliveryId);
+      } catch (e) {
+        debugPrint('Updating deliveries proof_url failed, trying proof_of_delivery: $e');
+        try {
+          await client.from('deliveries').update({
+            'status': 'delivered',
+            'proof_of_delivery': proofUrl,
+            'delivered_at': nowIso,
+          }).eq('id', deliveryId);
+        } catch (e2) {
+          debugPrint('Updating deliveries status & proof failed: $e2');
+        }
+      }
+    }
+
+    // 2. Update orders table
+    if (orderId.isNotEmpty) {
+      try {
+        await client.from('orders').update({
+          'order_status': 'delivered',
+          'status': 'delivered',
+          'proof_url': proofUrl,
+          'delivered_at': nowIso,
+        }).eq('id', orderId);
+      } catch (e) {
+        debugPrint('Updating orders proof_url failed, trying fallback: $e');
+        try {
+          await client.from('orders').update({
+            'proof_of_delivery': proofUrl,
+          }).eq('id', orderId);
+        } catch (_) {}
+      }
+    }
   }
 
   static Future<String> uploadSignature({
@@ -328,14 +460,25 @@ class SupabaseService {
     required Uint8List bytes,
   }) async {
     final filePath = 'signatures/$deliveryId/sig.png';
-    await client.storage.from('pod').uploadBinary(
-      filePath,
-      bytes,
-      fileOptions: const FileOptions(cacheControl: '3600', upsert: true),
-    );
-
-    final signedUrl = await client.storage.from('pod').createSignedUrl(filePath, 86400 * 365);
-    return signedUrl;
+    try {
+      await client.storage.from('pod').uploadBinary(
+        filePath,
+        bytes,
+        fileOptions: const FileOptions(cacheControl: '3600', upsert: true),
+      );
+      return client.storage.from('pod').getPublicUrl(filePath);
+    } catch (_) {
+      try {
+        await client.storage.from('proofs').uploadBinary(
+          filePath,
+          bytes,
+          fileOptions: const FileOptions(cacheControl: '3600', upsert: true),
+        );
+        return client.storage.from('proofs').getPublicUrl(filePath);
+      } catch (_) {
+        return '';
+      }
+    }
   }
 
   static Future<void> updateFulfillment({
@@ -343,16 +486,20 @@ class SupabaseService {
     String? podUrl,
     String? signatureData,
   }) async {
-    final Map<String, dynamic> updates = {};
     if (podUrl != null && podUrl.isNotEmpty) {
-      updates['pod_image_url'] = podUrl;
-    }
-    if (signatureData != null && signatureData.isNotEmpty) {
-      updates['signature_data'] = signatureData;
+      try {
+        await client.from('deliveries').update({
+          'pod_image_url': podUrl,
+        }).eq('id', deliveryId);
+      } catch (_) {}
     }
 
-    if (updates.isNotEmpty) {
-      await client.from('deliveries').update(updates).eq('id', deliveryId);
+    if (signatureData != null && signatureData.isNotEmpty) {
+      try {
+        await client.from('deliveries').update({
+          'signature_data': signatureData,
+        }).eq('id', deliveryId);
+      } catch (_) {}
     }
   }
 
@@ -426,37 +573,201 @@ class SupabaseService {
   }
 
   // --- GALLON VERIFICATION & TRANSACTIONS ---
-  static Future<Map<String, dynamic>?> verifyGallon(String gallonCode) async {
-    // 1. Query gallons table directly by gallon_code
-    final gallon = await client
-        .from('gallons')
-        .select('id, gallon_code, status, customer_id')
-        .eq('gallon_code', gallonCode)
-        .maybeSingle();
 
-    if (gallon != null) return gallon;
+  /// Query container record by `gallon_code` directly or via `rfid_qr_records.code`.
+  /// Returns container record with fields: id, gallon_code, status, customer_id, borrowed_at, returned_at, updated_at, customer_name.
+  static Future<Map<String, dynamic>?> fetchContainerByCode(String scannedCode) async {
+    final cleanCode = scannedCode.trim();
+    if (cleanCode.isEmpty) return null;
 
-    // 2. Query rfid_qr_records table by code where is_active = true
-    final rfidRecord = await client
-        .from('rfid_qr_records')
-        .select('gallon_id')
-        .eq('code', gallonCode)
-        .eq('is_active', true)
-        .maybeSingle();
+    Map<String, dynamic>? gallonRecord;
 
-    if (rfidRecord != null && rfidRecord['gallon_id'] != null) {
-      final gallonId = rfidRecord['gallon_id'].toString();
-      final resolvedGallon = await client
+    try {
+      // 1. Query public.gallons directly by gallon_code
+      final response = await client
           .from('gallons')
-          .select('id, gallon_code, status, customer_id')
-          .eq('id', gallonId)
+          .select('id, gallon_code, status, customer_id, borrowed_at, returned_at, updated_at')
+          .eq('gallon_code', cleanCode)
           .maybeSingle();
-      if (resolvedGallon != null) {
-        return resolvedGallon;
+
+      if (response != null) {
+        gallonRecord = Map<String, dynamic>.from(response);
+      }
+    } catch (e) {
+      debugPrint('fetchContainerByCode gallons query error: $e');
+    }
+
+    // 2. Query public.rfid_qr_records table by code
+    if (gallonRecord == null) {
+      try {
+        final rfidRecord = await client
+            .from('rfid_qr_records')
+            .select('gallon_id')
+            .eq('code', cleanCode)
+            .maybeSingle();
+
+        if (rfidRecord != null && rfidRecord['gallon_id'] != null) {
+          final gallonId = rfidRecord['gallon_id'].toString();
+          final response = await client
+              .from('gallons')
+              .select('id, gallon_code, status, customer_id, borrowed_at, returned_at, updated_at')
+              .eq('id', gallonId)
+              .maybeSingle();
+
+          if (response != null) {
+            gallonRecord = Map<String, dynamic>.from(response);
+          }
+        }
+      } catch (e) {
+        debugPrint('fetchContainerByCode rfid_qr_records query error: $e');
       }
     }
 
-    return null;
+    // 3. Resolve assigned customer name if customer_id exists
+    if (gallonRecord != null && gallonRecord['customer_id'] != null && gallonRecord['customer_id'].toString().isNotEmpty) {
+      final custId = gallonRecord['customer_id'].toString();
+      try {
+        final profile = await fetchProfile(custId);
+        if (profile != null) {
+          gallonRecord['customer_name'] = profile['full_name'] ?? 'Unknown Customer';
+        }
+      } catch (_) {}
+    }
+
+    return gallonRecord;
+  }
+
+  /// Backward-compatible wrapper for fetchContainerByCode
+  static Future<Map<String, dynamic>?> verifyGallon(String gallonCode) async {
+    return await fetchContainerByCode(gallonCode);
+  }
+
+  /// Executes real-time status toggle and logs transaction in Supabase following exact specifications.
+  /// Case A (available/not borrowed -> borrowed):
+  ///   - Updates public.gallons: status='borrowed', customer_id=<customer_id>, borrowed_at=NOW(), updated_at=NOW()
+  ///   - Inserts public.gallon_transactions: gallon_id, customer_id, action='borrowed', notes='Container delivered and scanned by Driver [Driver Name/ID]'
+  /// Case B (borrowed -> available):
+  ///   - Updates public.gallons: status='available', customer_id=NULL, returned_at=NOW(), updated_at=NOW()
+  ///   - Inserts public.gallon_transactions: gallon_id, customer_id=NULL, action='returned', notes='Empty container collected and returned to station by Driver [Driver Name/ID]'
+  static Future<Map<String, dynamic>> executeGallonStatusToggle({
+    required String gallonId,
+    required String gallonCode,
+    required String currentStatus,
+    String? customerId,
+    String? customerName,
+    String? driverNameOrId,
+    String? orderId,
+  }) async {
+    final nowIso = DateTime.now().toIso8601String();
+
+    // 1. Resolve Driver Name / Identifier for Notes
+    final driverId = currentUser?.id ?? '';
+    String driverIdentifier = driverNameOrId ?? '';
+    if (driverIdentifier.isEmpty && driverId.isNotEmpty) {
+      try {
+        final profile = await fetchProfile(driverId);
+        driverIdentifier = profile?['full_name'] ?? currentUser?.email ?? driverId;
+      } catch (_) {
+        driverIdentifier = currentUser?.email ?? driverId;
+      }
+    }
+    if (driverIdentifier.isEmpty) {
+      driverIdentifier = 'Driver';
+    }
+
+    final isCurrentlyBorrowed = (currentStatus.toLowerCase() == 'borrowed');
+
+    if (!isCurrentlyBorrowed) {
+      // --- CASE A: Container is currently 'available' -> Delivering / Lending to Customer ---
+      final targetCustomerId = (customerId != null && customerId.isNotEmpty) ? customerId : null;
+      final targetCustomerName = (customerName != null && customerName.isNotEmpty) ? customerName : 'Customer';
+      final notesText = 'Container delivered and scanned by Driver $driverIdentifier';
+
+      // 1. Update public.gallons
+      await client.from('gallons').update({
+        'status': 'borrowed',
+        'customer_id': targetCustomerId,
+        'borrowed_at': nowIso,
+        'updated_at': nowIso,
+      }).eq('id', gallonId);
+
+      // 2. Insert into public.gallon_transactions
+      await client.from('gallon_transactions').insert({
+        'gallon_id': gallonId,
+        'customer_id': targetCustomerId,
+        'action': 'borrowed',
+        'notes': notesText,
+        'created_at': nowIso,
+      });
+
+      // Call RPC function if configured in Supabase
+      try {
+        await client.rpc('driver_gallon_action', params: {
+          'p_gallon_id': gallonId,
+          'p_order_id': orderId ?? '',
+          'p_action': 'borrow',
+        });
+      } catch (e) {
+        debugPrint('RPC driver_gallon_action (borrow) note: $e');
+      }
+
+      return {
+        'success': true,
+        'gallon_id': gallonId,
+        'gallon_code': gallonCode,
+        'previous_status': currentStatus,
+        'new_status': 'borrowed',
+        'action': 'borrowed',
+        'customer_id': targetCustomerId,
+        'customer_name': targetCustomerName,
+        'notes': notesText,
+        'display_message': 'Gallon $gallonCode marked as BORROWED to $targetCustomerName',
+      };
+    } else {
+      // --- CASE B: Container is currently 'borrowed' -> Collecting / Returning Empty Container ---
+      final notesText = 'Empty container collected and returned to station by Driver $driverIdentifier';
+
+      // 1. Update public.gallons
+      await client.from('gallons').update({
+        'status': 'available',
+        'customer_id': null,
+        'returned_at': nowIso,
+        'updated_at': nowIso,
+      }).eq('id', gallonId);
+
+      // 2. Insert into public.gallon_transactions
+      await client.from('gallon_transactions').insert({
+        'gallon_id': gallonId,
+        'customer_id': null,
+        'action': 'returned',
+        'notes': notesText,
+        'created_at': nowIso,
+      });
+
+      // Call RPC function if configured in Supabase
+      try {
+        await client.rpc('driver_gallon_action', params: {
+          'p_gallon_id': gallonId,
+          'p_order_id': orderId ?? '',
+          'p_action': 'return',
+        });
+      } catch (e) {
+        debugPrint('RPC driver_gallon_action (return) note: $e');
+      }
+
+      return {
+        'success': true,
+        'gallon_id': gallonId,
+        'gallon_code': gallonCode,
+        'previous_status': 'borrowed',
+        'new_status': 'available',
+        'action': 'returned',
+        'customer_id': null,
+        'customer_name': customerName ?? 'Station',
+        'notes': notesText,
+        'display_message': 'Gallon $gallonCode returned and marked as AVAILABLE in station',
+      };
+    }
   }
 
   static Future<List<Map<String, dynamic>>> fetchOrderGallonTransactions(String orderId) async {
@@ -476,7 +787,6 @@ class SupabaseService {
     final canonicalAction = (action == 'borrow' || action == 'borrowed') ? 'borrow' : 'return';
     final gallonStatus = canonicalAction == 'borrow' ? 'borrowed' : 'available';
 
-    // 1. Tawagin ang RPC function para sa logs/triggers ng database sa public schema
     try {
       await client.rpc('driver_gallon_action', params: {
         'p_gallon_id': gallonId,
@@ -487,7 +797,6 @@ class SupabaseService {
       debugPrint('RPC driver_gallon_action error: $e');
     }
 
-    // 2. Direktang i-update ang status sa gallons table para pumasok agad sa Admin Side
     await client.from('gallons').update({
       'status': gallonStatus,
     }).eq('id', gallonId);

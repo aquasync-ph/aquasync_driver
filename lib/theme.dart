@@ -48,6 +48,7 @@ class AppColors {
   static const Color primaryBlue = mediumBlue;
   static const Color skyBlue = dominantLightBlue;
   static const Color background = scaffold;
+  static const Color lightBg = Color(0xFFF1F5F9);
 }
 
 class AppGradients {
