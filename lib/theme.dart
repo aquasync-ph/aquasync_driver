@@ -98,6 +98,16 @@ class AppGradients {
 
   static const LinearGradient ocean = iosDarkPanel;
   static const LinearGradient electric = accentButton;
+
+  // Medium Blue Panel Gradient
+  static const LinearGradient mediumBluePanel = LinearGradient(
+    colors: [
+      Color(0xFF266CA9),
+      Color(0xFF0F2573),
+    ],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
 }
 
 class AppDesign {
