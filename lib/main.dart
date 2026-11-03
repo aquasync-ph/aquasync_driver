@@ -6,6 +6,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/cupertino.dart';
 import 'package:flutter/services.dart';
 import 'package:mobile_scanner/mobile_scanner.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:image_picker/image_picker.dart';
@@ -272,12 +273,61 @@ void main() async {
   runApp(const DriverApp());
 }
 
-class DriverApp extends StatelessWidget {
+final GlobalKey<NavigatorState> navigatorKey = GlobalKey<NavigatorState>();
+
+class DriverApp extends StatefulWidget {
   const DriverApp({super.key});
+
+  @override
+  State<DriverApp> createState() => _DriverAppState();
+}
+
+class _DriverAppState extends State<DriverApp> {
+  StreamSubscription<AuthState>? _authSubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _setupGlobalAuthListener();
+  }
+
+  void _setupGlobalAuthListener() {
+    _authSubscription = Supabase.instance.client.auth.onAuthStateChange.listen((data) async {
+      final AuthChangeEvent event = data.event;
+      if (event == AuthChangeEvent.signedOut || event == AuthChangeEvent.userDeleted) {
+        // Clear local driver profile cache when session expires or user logs out globally
+        try {
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.remove('cached_driver_profile');
+        } catch (_) {}
+
+        // Navigate back to LoginScreen globally
+        if (navigatorKey.currentState != null) {
+          navigatorKey.currentState!.pushAndRemoveUntil(
+            PageRouteBuilder(
+              pageBuilder: (context, animation, secondaryAnimation) => const LoginScreen(),
+              transitionDuration: const Duration(milliseconds: 800),
+              transitionsBuilder: (context, animation, secondaryAnimation, child) {
+                return FadeTransition(opacity: animation, child: child);
+              },
+            ),
+            (route) => false,
+          );
+        }
+      }
+    });
+  }
+
+  @override
+  void dispose() {
+    _authSubscription?.cancel();
+    super.dispose();
+  }
 
   @override
   Widget build(BuildContext context) {
     return MaterialApp(
+      navigatorKey: navigatorKey,
       title: 'AquaSync Driver',
       debugShowCheckedModeBanner: false,
       theme: AquaTheme.theme,
@@ -580,48 +630,61 @@ class _SplashScreenState extends State<SplashScreen> with TickerProviderStateMix
   }
 
   Future<void> _checkInitialAuth() async {
-    await Future.delayed(const Duration(milliseconds: 2800));
+    // Run the animation minimum duration and the auth fetch concurrently for a smoother, faster UX
+    final authCheckFuture = _performAuthCheck();
+    final animationFuture = Future.delayed(const Duration(milliseconds: 2800));
+
+    await Future.wait([authCheckFuture, animationFuture]);
+    
     if (!mounted) return;
 
+    final result = await authCheckFuture;
+    if (result != null && result['role'] == 'driver') {
+      Navigator.pushReplacement(
+        context,
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) => DriverMainNavigationScreen(
+            driverName: result['full_name'] ?? 'Driver',
+            profileData: result,
+          ),
+          transitionDuration: const Duration(milliseconds: 800),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+        ),
+      );
+    } else {
+      // If a session exists but the role is not 'driver' (or profile fetch failed),
+      // ensure we clear the invalid session before redirecting to LoginScreen.
+      if (SupabaseService.isAuthenticated) {
+        await SupabaseService.signOut();
+      }
+      
+      Navigator.pushReplacement(
+        context,
+        PageRouteBuilder(
+          pageBuilder: (context, animation, secondaryAnimation) => const LoginScreen(),
+          transitionDuration: const Duration(milliseconds: 900),
+          transitionsBuilder: (context, animation, secondaryAnimation, child) {
+            return FadeTransition(opacity: animation, child: child);
+          },
+        ),
+      );
+    }
+  }
+
+  Future<Map<String, dynamic>?> _performAuthCheck() async {
     try {
       if (SupabaseService.isAuthenticated) {
         final user = SupabaseService.currentUser;
         if (user != null) {
-          final profile = await SupabaseService.fetchProfile(user.id);
-          if (profile != null && profile['role'] == 'driver') {
-            if (!mounted) return;
-            Navigator.pushReplacement(
-              context,
-              PageRouteBuilder(
-                pageBuilder: (context, animation, secondaryAnimation) => DriverMainNavigationScreen(
-                  driverName: profile['full_name'] ?? 'Driver',
-                  profileData: profile,
-                ),
-                transitionDuration: const Duration(milliseconds: 800),
-                transitionsBuilder: (context, animation, secondaryAnimation, child) {
-                  return FadeTransition(opacity: animation, child: child);
-                },
-              ),
-            );
-            return;
-          }
+          return await SupabaseService.fetchProfile(user.id);
         }
       }
     } catch (e) {
       debugPrint('Auth check error: $e');
     }
-
-    if (!mounted) return;
-    Navigator.pushReplacement(
-      context,
-      PageRouteBuilder(
-        pageBuilder: (context, animation, secondaryAnimation) => const LoginScreen(),
-        transitionDuration: const Duration(milliseconds: 900),
-        transitionsBuilder: (context, animation, secondaryAnimation, child) {
-          return FadeTransition(opacity: animation, child: child);
-        },
-      ),
-    );
+    return null;
   }
 
   @override

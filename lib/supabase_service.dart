@@ -1,8 +1,10 @@
 import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 class SupabaseService {
+  static const String _profileCacheKey = 'cached_driver_profile';
   static SupabaseClient get client => Supabase.instance.client;
 
   static User? get currentUser {
@@ -33,6 +35,10 @@ class SupabaseService {
   }
 
   static Future<void> signOut() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.remove(_profileCacheKey);
+    } catch (_) {}
     await client.auth.signOut();
   }
 
@@ -42,11 +48,38 @@ class SupabaseService {
 
   // --- PROFILES & DRIVER LOCATION ---
   static Future<Map<String, dynamic>?> fetchProfile(String userId) async {
-    return await client
-        .from('profiles')
-        .select('id, full_name, phone, address, role, avatar_url, latitude, longitude, updated_at')
-        .eq('id', userId)
-        .maybeSingle();
+    try {
+      final data = await client
+          .from('profiles')
+          .select('id, full_name, phone, address, role, avatar_url, latitude, longitude, updated_at')
+          .eq('id', userId)
+          .maybeSingle()
+          .timeout(const Duration(seconds: 5));
+      
+      if (data != null) {
+        // Only cache the profile if it belongs to the currently logged-in user.
+        // This prevents overwriting the driver's cached profile when fetching a customer's profile.
+        if (userId == client.auth.currentUser?.id) {
+          try {
+            final prefs = await SharedPreferences.getInstance();
+            await prefs.setString(_profileCacheKey, jsonEncode(data));
+          } catch (_) {}
+        }
+      }
+      return data;
+    } catch (e) {
+      debugPrint('Error fetching profile from DB (or timeout): $e');
+      // Fallback to locally cached profile (Offline session support)
+      try {
+        final prefs = await SharedPreferences.getInstance();
+        final cached = prefs.getString(_profileCacheKey);
+        if (cached != null) {
+          debugPrint('Loaded driver profile from local cache.');
+          return jsonDecode(cached) as Map<String, dynamic>;
+        }
+      } catch (_) {}
+      return null;
+    }
   }
 
   static Future<void> updateDriverLocation({
