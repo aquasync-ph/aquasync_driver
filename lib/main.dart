@@ -2057,21 +2057,21 @@ class _DriverMainNavigationScreenState extends State<DriverMainNavigationScreen>
                 child: ClipRRect(
                   borderRadius: BorderRadius.circular(40),
                   child: BackdropFilter(
-                    filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                    filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
                     child: Container(
                       height: 64,
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.75),
+                        color: AppColors.darkRoyalBlue.withValues(alpha: 0.95), // Premium Dark Blue Navigation
                         borderRadius: BorderRadius.circular(40),
                         border: Border.all(
-                          color: const Color(0xFFE2E8F0),
+                          color: AppColors.mediumBlue.withValues(alpha: 0.5), // Subtle inner glow border
                           width: 1.5,
                         ),
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.05),
-                            blurRadius: 20,
-                            offset: const Offset(0, 8),
+                            color: AppColors.midnightBlue.withValues(alpha: 0.3),
+                            blurRadius: 24,
+                            offset: const Offset(0, 10),
                           ),
                         ],
                       ),
@@ -2088,31 +2088,55 @@ class _DriverMainNavigationScreenState extends State<DriverMainNavigationScreen>
                 ),
               ),
               const SizedBox(width: 12),
-              // Scan FAB
-              GestureDetector(
-                onTap: () {
-                  HapticFeedback.lightImpact();
-                  setState(() => _currentIndex = 1);
-                },
-                child: Container(
-                  height: 64,
-                  width: 64,
-                  decoration: BoxDecoration(
-                    gradient: AppGradients.accentButton,
-                    shape: BoxShape.circle,
-                    boxShadow: [
-                      BoxShadow(
-                        color: const Color(0xFF266CA9).withValues(alpha: 0.3),
-                        blurRadius: 15,
-                        offset: const Offset(0, 8),
+              // Separated QR Scan Button
+              ClipRRect(
+                borderRadius: BorderRadius.circular(32),
+                child: BackdropFilter(
+                  filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+                  child: GestureDetector(
+                    onTap: () {
+                      HapticFeedback.lightImpact();
+                      setState(() => _currentIndex = 1);
+                    },
+                    child: AnimatedContainer(
+                      duration: const Duration(milliseconds: 400),
+                      curve: Curves.easeOutQuint,
+                      height: 64,
+                      width: 64,
+                      decoration: BoxDecoration(
+                        color: AppColors.darkRoyalBlue.withValues(alpha: 0.95),
+                        shape: BoxShape.circle,
+                        border: Border.all(
+                          color: _currentIndex == 1 
+                              ? const Color(0xFF38BDF8).withValues(alpha: 0.5) 
+                              : AppColors.mediumBlue.withValues(alpha: 0.5),
+                          width: 1.5,
+                        ),
+                        boxShadow: [
+                          BoxShadow(
+                            color: _currentIndex == 1 
+                                ? const Color(0xFF38BDF8).withValues(alpha: 0.2)
+                                : AppColors.midnightBlue.withValues(alpha: 0.3),
+                            blurRadius: _currentIndex == 1 ? 12 : 24,
+                            offset: Offset(0, _currentIndex == 1 ? 4 : 10),
+                          ),
+                        ],
                       ),
-                    ],
-                  ),
-                  child: const Center(
-                    child: Icon(
-                      Icons.qr_code_scanner_rounded,
-                      color: Colors.white,
-                      size: 28,
+                      child: Center(
+                        child: AnimatedContainer(
+                          duration: const Duration(milliseconds: 400),
+                          padding: EdgeInsets.all(_currentIndex == 1 ? 12.0 : 0.0),
+                          decoration: BoxDecoration(
+                            color: _currentIndex == 1 ? const Color(0xFF38BDF8).withValues(alpha: 0.15) : Colors.transparent,
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(
+                            Icons.qr_code_scanner_rounded,
+                            color: _currentIndex == 1 ? const Color(0xFF38BDF8) : const Color(0xFF94A3B8),
+                            size: 24,
+                          ),
+                        ),
+                      ),
                     ),
                   ),
                 ),
@@ -2139,22 +2163,27 @@ class _DriverMainNavigationScreenState extends State<DriverMainNavigationScreen>
         curve: Curves.easeOutQuint,
         builder: (context, t, child) {
           // Smoothly interpolate colors based on animation progress 't'
-          final Color? bgColor = Color.lerp(Colors.transparent, const Color(0xFF266CA9), t); // Medium Blue Background when active
-          final Color? iconColor = Color.lerp(const Color(0xFF94A3B8), Colors.white, t); // White Icon when active
+          // When active: Bright Neon Cyan background; When inactive: Transparent
+          final Color? bgColor = Color.lerp(Colors.transparent, const Color(0xFF38BDF8).withValues(alpha: 0.15), t); 
+          // When active: Bright Cyan Icon; When inactive: Muted Light Blue Icon
+          final Color? iconColor = Color.lerp(const Color(0xFF94A3B8), const Color(0xFF38BDF8), t);
 
           return Container(
-            margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 12), // Reduced margin to prevent overflow
+            margin: const EdgeInsets.symmetric(horizontal: 2, vertical: 12), 
             padding: EdgeInsets.symmetric(
-              horizontal: 8 + (8 * t), // Expands padding smoothly when active
+              horizontal: 8 + (10 * t), // Expands padding smoothly when active
               vertical: 8,
             ),
             decoration: BoxDecoration(
               color: bgColor,
               borderRadius: BorderRadius.circular(24),
+              border: isSelected 
+                  ? Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.3 * t))
+                  : Border.all(color: Colors.transparent),
               boxShadow: isSelected
                   ? [
                       BoxShadow(
-                        color: const Color(0xFF266CA9).withValues(alpha: 0.3 * t),
+                        color: const Color(0xFF38BDF8).withValues(alpha: 0.15 * t),
                         blurRadius: 8,
                         offset: const Offset(0, 3),
                       ),
@@ -2162,54 +2191,32 @@ class _DriverMainNavigationScreenState extends State<DriverMainNavigationScreen>
                   : null,
             ),
             child: Row(
-              mainAxisAlignment: MainAxisAlignment.center,
               mainAxisSize: MainAxisSize.min,
               children: [
-                // Icon smoothly changes color, size, and glyph
-                AnimatedSwitcher(
-                  duration: const Duration(milliseconds: 300),
-                  transitionBuilder: (Widget child, Animation<double> animation) {
-                    return FadeTransition(
-                      opacity: animation,
-                      child: ScaleTransition(
-                        scale: Tween<double>(begin: 0.8, end: 1.0).animate(animation),
-                        child: child,
-                      ),
-                    );
-                  },
-                  child: Icon(
-                    isSelected ? activeIcon : icon,
-                    key: ValueKey<bool>(isSelected),
-                    color: iconColor,
-                    size: 22, // Slightly reduced icon size to fit better
-                  ),
+                Icon(
+                  isSelected ? activeIcon : icon,
+                  color: iconColor,
+                  size: 24,
                 ),
-                // Text smoothly expands and fades in (Modern Liquid Effect)
-                Flexible(
-                  child: ClipRect(
+                if (t > 0.1) // Only show text when animation is somewhat progressed
+                  ClipRect(
                     child: Align(
                       alignment: Alignment.centerLeft,
                       widthFactor: t,
-                      child: Opacity(
-                        opacity: t.clamp(0.0, 1.0),
-                        child: Padding(
-                          padding: const EdgeInsets.only(left: 4), // Reduced padding inside text
-                          child: Text(
-                            label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              color: Colors.white, // White text to contrast with blue background
-                              fontWeight: FontWeight.w800,
-                              fontSize: 12, // Slightly reduced font size
-                              letterSpacing: 0.1,
-                            ),
+                      child: Padding(
+                        padding: const EdgeInsets.only(left: 6),
+                        child: Text(
+                          label,
+                          style: TextStyle(
+                            color: iconColor,
+                            fontWeight: FontWeight.w900,
+                            fontSize: 12,
+                            letterSpacing: 0.5,
                           ),
                         ),
                       ),
                     ),
                   ),
-                ),
               ],
             ),
           );
@@ -2218,10 +2225,6 @@ class _DriverMainNavigationScreenState extends State<DriverMainNavigationScreen>
     );
   }
 }
-
-// -----------------------------------------------------------------------------
-// DRIVER NOTIFICATION CENTER SHEET (Real-time Admin Dispatches & Notifications)
-// -----------------------------------------------------------------------------
 
 // -----------------------------------------------------------------------------
 // DRIVER NOTIFICATION CENTER SHEET (Real-time Admin Dispatches & Notifications)
@@ -3591,6 +3594,7 @@ class _TasksHomeScreenState extends State<TasksHomeScreen> with WidgetsBindingOb
 }
 
 // -----------------------------------------------------------------------------
+// -----------------------------------------------------------------------------
 // TAB 2: QR GALLON SCANNER SCREEN (Physical Gallon Real-Time Supabase Tracking)
 // -----------------------------------------------------------------------------
 
@@ -3603,12 +3607,17 @@ class QrScannerScreen extends StatefulWidget {
   State<QrScannerScreen> createState() => _QrScannerScreenState();
 }
 
-class _QrScannerScreenState extends State<QrScannerScreen> {
+class _QrScannerScreenState extends State<QrScannerScreen>
+    with SingleTickerProviderStateMixin {
   final MobileScannerController _scannerController = MobileScannerController();
-  
+
+  late AnimationController _scanAnimationController;
+  late Animation<double> _scanAnimation;
+
   bool _isProcessingCode = false;
   bool _isSavingTransaction = false;
   bool _isBatchScanMode = false;
+  bool _isTorchOn = false;
 
   Map<String, dynamic>? _latestToggleResult;
   String? _scanResultState; // 'success', 'pending', 'unregistered', 'error'
@@ -3624,6 +3633,18 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
     super.initState();
     _selectedOrderFromList = widget.activeOrder;
     _fetchDriverActiveOrders();
+
+    _scanAnimationController = AnimationController(
+      vsync: this,
+      duration: const Duration(milliseconds: 2000),
+    )..repeat(reverse: true);
+
+    _scanAnimation = Tween<double>(begin: 0.0, end: 1.0).animate(
+      CurvedAnimation(
+        parent: _scanAnimationController,
+        curve: Curves.easeInOut,
+      ),
+    );
   }
 
   @override
@@ -3640,6 +3661,7 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
 
   @override
   void dispose() {
+    _scanAnimationController.dispose();
     _scannerController.dispose();
     super.dispose();
   }
@@ -3712,25 +3734,24 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
     final rawCode = barcodes.first.rawValue?.trim();
     if (rawCode == null || rawCode.isEmpty) return;
 
+    HapticFeedback.mediumImpact();
+
     setState(() {
       _isProcessingCode = true;
     });
 
     try {
-      // Step 1: Query public.gallons (or rfid_qr_records)
       final gallonRecord = await SupabaseService.fetchContainerByCode(rawCode);
 
       if (!mounted) return;
 
       if (gallonRecord == null) {
-        // Step 1 Fallback: Container code not registered in database
         setState(() {
           _scanResultState = 'unregistered';
         });
 
         _showUnregisteredGallonDialog(rawCode);
       } else {
-        // Step 2: Container Record Found! Prepare Toggle Logic
         final currentStatus = gallonRecord['status']?.toString() ?? 'available';
         final effectiveOrder = widget.activeOrder ?? _selectedOrderFromList;
 
@@ -3786,7 +3807,6 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
               icon: Icons.check_circle_outline,
             );
           } else {
-            // --- BATCH SCAN MODE (No order): Real-time toggle in Supabase ---
             final toggleResult = await SupabaseService.executeGallonStatusToggle(
               gallonId: gallonId,
               gallonCode: gallonCode,
@@ -3824,7 +3844,6 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
             );
           }
         } else {
-          // --- SINGLE SCAN MODE: Prompt Confirmation Card / Dialog with Details ---
           setState(() {
             _scanResultState = 'pending';
           });
@@ -3864,15 +3883,22 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        backgroundColor: Colors.white,
-        title: const Row(
+        backgroundColor: const Color(0xFF0F172A),
+        title: Row(
           children: [
-            Icon(Icons.warning_amber_rounded, color: AppColors.errorRed, size: 28),
-            SizedBox(width: 10),
-            Expanded(
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: AppColors.errorRed.withValues(alpha: 0.15),
+                shape: BoxShape.circle,
+              ),
+              child: const Icon(Icons.qr_code_2_rounded, color: AppColors.errorRed, size: 24),
+            ),
+            const SizedBox(width: 12),
+            const Expanded(
               child: Text(
-                'Unregistered QR Code',
-                style: TextStyle(fontWeight: FontWeight.bold, fontSize: 17, color: AppColors.darkText),
+                'UNREGISTERED TAG',
+                style: TextStyle(fontWeight: FontWeight.w900, fontSize: 16, color: Colors.white, letterSpacing: 0.5),
               ),
             ),
           ],
@@ -3881,48 +3907,35 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
           mainAxisSize: MainAxisSize.min,
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
-            Text(
-              'Unregistered Gallon QR Code',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.errorRed),
-            ),
-            const SizedBox(height: 8),
-            Text(
-              'The scanned code "$rawCode" does not match any container in the station gallons database or RFID QR records.',
-              style: const TextStyle(fontSize: 13, color: AppColors.slateText, height: 1.4),
-            ),
-            const SizedBox(height: 14),
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
               decoration: BoxDecoration(
-                color: AppColors.errorRed.withValues(alpha: 0.08),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: AppColors.errorRed.withValues(alpha: 0.2)),
+                color: AppColors.errorRed.withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(8),
+                border: Border.all(color: AppColors.errorRed.withValues(alpha: 0.3)),
               ),
-              child: const Row(
-                children: [
-                  Icon(Icons.info_outline, size: 16, color: AppColors.errorRed),
-                  SizedBox(width: 8),
-                  Expanded(
-                    child: Text(
-                      'Please verify container tag or register code in admin station management.',
-                      style: TextStyle(fontSize: 11, color: AppColors.darkText, fontWeight: FontWeight.w600),
-                    ),
-                  ),
-                ],
+              child: Text(
+                'CODE: $rawCode',
+                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 13, color: AppColors.errorRed, fontFamily: 'monospace'),
               ),
+            ),
+            const SizedBox(height: 12),
+            const Text(
+              'This QR tag code was not found in station gallon records. Please verify container physical tag or register code in station inventory.',
+              style: TextStyle(fontSize: 12, color: Colors.white70, height: 1.4),
             ),
           ],
         ),
         actions: [
           ElevatedButton.icon(
             onPressed: () => Navigator.pop(context),
-            icon: const Icon(Icons.qr_code_scanner, size: 18),
-            label: const Text('DISMISS & SCAN AGAIN'),
+            icon: const Icon(Icons.refresh_rounded, size: 18),
+            label: const Text('SCAN AGAIN'),
             style: ElevatedButton.styleFrom(
               backgroundColor: AppColors.errorRed,
               foregroundColor: Colors.white,
-              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
-              padding: const EdgeInsets.symmetric(horizontal: 18, vertical: 12),
+              shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+              padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             ),
           ),
         ],
@@ -3936,32 +3949,38 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
     required String? targetCustomerName,
     required Order? effectiveOrder,
   }) {
-    final gallonId = gallonRecord['id']?.toString() ?? '';
     final gallonCode = gallonRecord['gallon_code']?.toString() ?? 'N/A';
     final currentStatus = gallonRecord['status']?.toString() ?? 'available';
     final isCurrentlyBorrowed = (currentStatus.toLowerCase() == 'borrowed');
 
     final previousStatusStr = currentStatus.toUpperCase();
     final newStatusStr = isCurrentlyBorrowed ? 'AVAILABLE' : 'BORROWED';
-    final actionName = isCurrentlyBorrowed ? 'Return Empty Container' : 'Lend Container to Customer';
+    final actionName = isCurrentlyBorrowed ? 'RETURN CONTAINER' : 'LEND CONTAINER';
 
     showDialog(
       context: context,
       builder: (context) => AlertDialog(
         shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
-        backgroundColor: Colors.white,
+        backgroundColor: const Color(0xFF0F172A),
         title: Row(
           children: [
-            Icon(
-              isCurrentlyBorrowed ? Icons.inbox_rounded : Icons.outbox_rounded,
-              color: isCurrentlyBorrowed ? AppColors.mediumBlue : AppColors.successGreen,
-              size: 26,
+            Container(
+              padding: const EdgeInsets.all(10),
+              decoration: BoxDecoration(
+                color: isCurrentlyBorrowed ? AppColors.mediumBlue.withValues(alpha: 0.2) : AppColors.successGreen.withValues(alpha: 0.2),
+                shape: BoxShape.circle,
+              ),
+              child: Icon(
+                isCurrentlyBorrowed ? Icons.inbox_rounded : Icons.outbox_rounded,
+                color: isCurrentlyBorrowed ? const Color(0xFF38BDF8) : AppColors.successGreen,
+                size: 24,
+              ),
             ),
-            const SizedBox(width: 10),
+            const SizedBox(width: 12),
             Expanded(
               child: Text(
                 actionName,
-                style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 16, color: AppColors.darkText),
+                style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 16, color: Colors.white, letterSpacing: 0.5),
               ),
             ),
           ],
@@ -3971,45 +3990,45 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Container(
-              padding: const EdgeInsets.all(12),
+              padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: const Color(0xFFF0F9FF),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: AppColors.primary.withValues(alpha: 0.2)),
+                color: const Color(0xFF1E293B),
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.2)),
               ),
               child: Row(
                 children: [
-                  const Icon(Icons.compare_arrows_rounded, color: AppColors.primary, size: 22),
-                  const SizedBox(width: 10),
+                  const Icon(Icons.compare_arrows_rounded, color: Color(0xFF38BDF8), size: 22),
+                  const SizedBox(width: 12),
                   Expanded(
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: [
-                        const Text('STATUS TOGGLE TRANSITION', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.grayText)),
-                        const SizedBox(height: 2),
+                        const Text('STATUS TRANSITION', style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white60, letterSpacing: 0.8)),
+                        const SizedBox(height: 4),
                         Row(
                           children: [
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                              decoration: BoxDecoration(color: Colors.grey.shade200, borderRadius: BorderRadius.circular(6)),
-                              child: Text(previousStatusStr, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.darkText)),
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                              decoration: BoxDecoration(color: Colors.white10, borderRadius: BorderRadius.circular(6)),
+                              child: Text(previousStatusStr, style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: Colors.white70)),
                             ),
                             const Padding(
                               padding: EdgeInsets.symmetric(horizontal: 6),
-                              child: Icon(Icons.arrow_forward_rounded, size: 14, color: AppColors.primary),
+                              child: Icon(Icons.arrow_forward_rounded, size: 14, color: Color(0xFF38BDF8)),
                             ),
                             Container(
-                              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+                              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
                               decoration: BoxDecoration(
-                                color: isCurrentlyBorrowed ? AppColors.successBg : AppColors.mediumBlue.withValues(alpha: 0.15),
+                                color: isCurrentlyBorrowed ? AppColors.successGreen.withValues(alpha: 0.2) : const Color(0xFF38BDF8).withValues(alpha: 0.2),
                                 borderRadius: BorderRadius.circular(6),
                               ),
                               child: Text(
                                 newStatusStr,
                                 style: TextStyle(
                                   fontSize: 11,
-                                  fontWeight: FontWeight.bold,
-                                  color: isCurrentlyBorrowed ? AppColors.successGreen : AppColors.mediumBlue,
+                                  fontWeight: FontWeight.w900,
+                                  color: isCurrentlyBorrowed ? AppColors.successGreen : const Color(0xFF38BDF8),
                                 ),
                               ),
                             ),
@@ -4022,36 +4041,22 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
               ),
             ),
             const SizedBox(height: 16),
-            _detailRow('Gallon Code:', gallonCode),
-            _detailRow(
-              isCurrentlyBorrowed ? 'Previous Owner:' : 'Assigned Customer:',
+            _dialogDetailRow('Gallon Code', gallonCode),
+            _dialogDetailRow(
+              isCurrentlyBorrowed ? 'Previous Owner' : 'Target Customer',
               isCurrentlyBorrowed
                   ? (gallonRecord['customer_name']?.toString() ?? (effectiveOrder != null && effectiveOrder.customer.isNotEmpty ? effectiveOrder.customer : 'Customer'))
                   : ((effectiveOrder != null && effectiveOrder.customer.isNotEmpty && effectiveOrder.customer != 'Customer')
                       ? effectiveOrder.customer
                       : (targetCustomerName ?? 'Customer')),
             ),
-            if (effectiveOrder != null) _detailRow('Target Delivery:', effectiveOrder.orderNumber),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(12),
-              decoration: BoxDecoration(
-                color: AppColors.lightBg,
-                borderRadius: BorderRadius.circular(12),
-              ),
-              child: Text(
-                isCurrentlyBorrowed
-                    ? 'Notes: Empty container collected and returned to station by Driver'
-                    : 'Notes: Container delivered and scanned by Driver',
-                style: const TextStyle(fontSize: 11, color: AppColors.slateText, fontStyle: FontStyle.italic),
-              ),
-            ),
+            if (effectiveOrder != null) _dialogDetailRow('Order Reference', effectiveOrder.orderNumber),
           ],
         ),
         actions: [
           TextButton(
             onPressed: () => Navigator.pop(context),
-            child: const Text('CANCEL', style: TextStyle(color: AppColors.grayText, fontWeight: FontWeight.bold)),
+            child: const Text('CANCEL', style: TextStyle(color: Colors.white60, fontWeight: FontWeight.bold)),
           ),
           ElevatedButton.icon(
             onPressed: () async {
@@ -4066,11 +4071,27 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
             icon: const Icon(Icons.check_circle_rounded, size: 18),
             label: Text(isCurrentlyBorrowed ? 'CONFIRM RETURN' : 'CONFIRM BORROW'),
             style: ElevatedButton.styleFrom(
-              backgroundColor: isCurrentlyBorrowed ? AppColors.primary : AppColors.successGreen,
+              backgroundColor: isCurrentlyBorrowed ? AppColors.mediumBlue : AppColors.successGreen,
               foregroundColor: Colors.white,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
               padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
             ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _dialogDetailRow(String label, String value) {
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 8.0),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+        children: [
+          Text(label, style: const TextStyle(fontSize: 12, color: Colors.white60, fontWeight: FontWeight.w600)),
+          Text(
+            value,
+            style: const TextStyle(fontSize: 13, color: Colors.white, fontWeight: FontWeight.bold),
           ),
         ],
       ),
@@ -4179,32 +4200,14 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
     }
   }
 
-  Widget _detailRow(String label, String value) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8.0),
-      child: Row(
-        children: [
-          Text(label, style: const TextStyle(fontSize: 12, color: AppColors.grayText, fontWeight: FontWeight.bold)),
-          const SizedBox(width: 8),
-          Expanded(
-            child: Text(
-              value,
-              style: const TextStyle(fontSize: 13, color: AppColors.darkText, fontWeight: FontWeight.w900),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
   void _showOrderSelectionModal() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      backgroundColor: const Color(0xFF0F172A),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
       builder: (context) {
         return Container(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -4212,16 +4215,16 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  const Text('Select Active Delivery Order', style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.navy)),
-                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
+                  const Text('Select Target Order', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: -0.3)),
+                  IconButton(icon: const Icon(Icons.close_rounded, color: Colors.white70), onPressed: () => Navigator.pop(context)),
                 ],
               ),
-              const SizedBox(height: 8),
+              const SizedBox(height: 12),
               if (_activeDriverOrders.isEmpty)
                 const Padding(
-                  padding: EdgeInsets.symmetric(vertical: 20),
+                  padding: EdgeInsets.symmetric(vertical: 30),
                   child: Center(
-                    child: Text('No active delivery orders found for driver.', style: TextStyle(color: AppColors.grayText)),
+                    child: Text('No active delivery orders assigned.', style: TextStyle(color: Colors.white60, fontSize: 13)),
                   ),
                 )
               else
@@ -4229,19 +4232,24 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
                   child: ListView.separated(
                     shrinkWrap: true,
                     itemCount: _activeDriverOrders.length,
-                    separatorBuilder: (_, __) => const Divider(),
+                    separatorBuilder: (_, __) => const Divider(color: Colors.white12, height: 1),
                     itemBuilder: (context, index) {
                       final ord = _activeDriverOrders[index];
                       final isSelected = (_selectedOrderFromList?.id == ord.id);
 
                       return ListTile(
-                        leading: CircleAvatar(
-                          backgroundColor: isSelected ? AppColors.primary : AppColors.lightBg,
-                          child: Icon(Icons.local_shipping_rounded, color: isSelected ? Colors.white : AppColors.primary, size: 20),
+                        contentPadding: const EdgeInsets.symmetric(vertical: 4, horizontal: 8),
+                        leading: Container(
+                          padding: const EdgeInsets.all(10),
+                          decoration: BoxDecoration(
+                            color: isSelected ? const Color(0xFF38BDF8).withValues(alpha: 0.2) : Colors.white.withValues(alpha: 0.05),
+                            shape: BoxShape.circle,
+                          ),
+                          child: Icon(Icons.local_shipping_rounded, color: isSelected ? const Color(0xFF38BDF8) : Colors.white70, size: 20),
                         ),
-                        title: Text(ord.orderNumber, style: const TextStyle(fontWeight: FontWeight.bold)),
-                        subtitle: Text('${ord.customer} • ${ord.totalGallons} Gallons'),
-                        trailing: isSelected ? const Icon(Icons.check_circle_rounded, color: AppColors.successGreen) : null,
+                        title: Text(ord.orderNumber, style: const TextStyle(fontWeight: FontWeight.bold, color: Colors.white, fontSize: 14)),
+                        subtitle: Text('${ord.customer} • ${ord.totalGallons} Gallons', style: const TextStyle(color: Colors.white60, fontSize: 12)),
+                        trailing: isSelected ? const Icon(Icons.check_circle_rounded, color: AppColors.successGreen, size: 22) : null,
                         onTap: () {
                           setState(() => _selectedOrderFromList = ord);
                           Navigator.pop(context);
@@ -4263,57 +4271,13 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
 
     return AnnotatedRegion<SystemUiOverlayStyle>(
       value: const SystemUiOverlayStyle(
-        statusBarColor: Color(0xFF0F2573),
+        statusBarColor: Colors.transparent,
         statusBarIconBrightness: Brightness.light,
-        systemNavigationBarColor: Colors.white,
-        systemNavigationBarIconBrightness: Brightness.dark,
+        systemNavigationBarColor: Color(0xFF090D16),
+        systemNavigationBarIconBrightness: Brightness.light,
       ),
       child: Scaffold(
         backgroundColor: const Color(0xFF090D16),
-        appBar: AppBar(
-          flexibleSpace: Container(
-            decoration: const BoxDecoration(
-              gradient: AppGradients.ocean,
-            ),
-          ),
-          backgroundColor: Colors.transparent,
-          elevation: 0,
-          centerTitle: true,
-          title: const Text(
-            'Gallon QR Scanner',
-            style: TextStyle(
-              color: Colors.white,
-              fontWeight: FontWeight.bold,
-              fontSize: 18,
-              fontFamily: 'Poppins',
-            ),
-          ),
-          actions: [
-            IconButton(
-              icon: Icon(_isBatchScanMode ? Icons.dynamic_feed_rounded : Icons.crop_free_rounded, color: _isBatchScanMode ? const Color(0xFF38BDF8) : Colors.white),
-              tooltip: _isBatchScanMode ? 'Switch to Single Scan' : 'Switch to Batch Scan',
-              onPressed: () {
-                setState(() => _isBatchScanMode = !_isBatchScanMode);
-                DriverNotification.show(
-                  context,
-                  title: _isBatchScanMode ? 'BATCH SCAN MODE' : 'SINGLE SCAN MODE',
-                  message: _isBatchScanMode ? 'Continuous scanning enabled' : 'Single scan confirmation enabled',
-                  backgroundColor: AppColors.mediumBlue,
-                  icon: _isBatchScanMode ? Icons.dynamic_feed_rounded : Icons.crop_free_rounded,
-                );
-              },
-            ),
-            IconButton(
-              icon: const Icon(Icons.flash_on, color: Colors.white),
-              onPressed: () => _scannerController.toggleTorch(),
-            ),
-            IconButton(
-              icon: const Icon(Icons.cameraswitch, color: Colors.white),
-              onPressed: () => _scannerController.switchCamera(),
-            ),
-            const SizedBox(width: 4),
-          ],
-        ),
         body: Stack(
           children: [
             // Camera Viewfinder Feed
@@ -4324,23 +4288,13 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
                 return Container(
                   color: const Color(0xFF090D16),
                   child: const Center(
-                    child: Column(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        SizedBox(
-                          width: 36,
-                          height: 36,
-                          child: CircularProgressIndicator(
-                            color: Color(0xFF38BDF8),
-                            strokeWidth: 3,
-                          ),
-                        ),
-                        SizedBox(height: 16),
-                        Text(
-                          'Starting Camera Viewfinder...',
-                          style: TextStyle(color: Colors.white70, fontSize: 13, fontWeight: FontWeight.w600),
-                        ),
-                      ],
+                    child: SizedBox(
+                      width: 32,
+                      height: 32,
+                      child: CircularProgressIndicator(
+                        color: Color(0xFF38BDF8),
+                        strokeWidth: 2.5,
+                      ),
                     ),
                   ),
                 );
@@ -4359,27 +4313,22 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
                             color: AppColors.errorRed.withValues(alpha: 0.15),
                             shape: BoxShape.circle,
                           ),
-                          child: const Icon(Icons.camera_alt_outlined, size: 48, color: AppColors.errorRed),
+                          child: const Icon(Icons.camera_alt_outlined, size: 44, color: AppColors.errorRed),
                         ),
                         const SizedBox(height: 16),
                         const Text(
                           'Camera Access Required',
-                          style: TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold),
+                          style: const TextStyle(color: Colors.white, fontSize: 16, fontWeight: FontWeight.bold),
                         ),
-                        const SizedBox(height: 8),
-                        Text(
-                          'Camera permission is needed to scan gallon QR tags.',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: Colors.white.withValues(alpha: 0.7), fontSize: 13),
-                        ),
-                        const SizedBox(height: 20),
+                        const SizedBox(height: 16),
                         ElevatedButton.icon(
                           onPressed: () => _scannerController.start(),
-                          icon: const Icon(Icons.refresh, size: 18),
-                          label: const Text('RETRY CAMERA'),
+                          icon: const Icon(Icons.refresh_rounded, size: 18),
+                          label: const Text('ENABLE CAMERA'),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: AppColors.mediumBlue,
                             foregroundColor: Colors.white,
+                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
                           ),
                         ),
                       ],
@@ -4389,43 +4338,145 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
               },
             ),
 
-            // Visual Scan Frame with Corner Brackets
+            // Futuristic Scan Reticle Overlay
             _buildScanFrame(),
 
+            // Top Sleek Floating Control HUD Bar
             Positioned(
-              top: 16,
+              top: MediaQuery.of(context).padding.top + 10,
               left: 16,
               right: 16,
               child: ClipRRect(
-                borderRadius: BorderRadius.circular(16),
+                borderRadius: BorderRadius.circular(20),
                 child: BackdropFilter(
-                  filter: ui.ImageFilter.blur(sigmaX: 10, sigmaY: 10),
-                  child: InkWell(
-                    onTap: _showOrderSelectionModal,
-                    borderRadius: BorderRadius.circular(16),
-                    child: Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
-                      decoration: BoxDecoration(
-                        gradient: AppGradients.ocean,
-                        borderRadius: BorderRadius.circular(16),
-                        border: Border.all(color: Colors.white.withValues(alpha: 0.25), width: 1),
-                      ),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.person_pin_circle_rounded, color: Color(0xFF7DD3FC), size: 18),
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Text(
-                              activeOrder != null
-                                  ? 'Target Customer: ${activeOrder.customer} (${activeOrder.orderNumber})'
-                                  : 'No active delivery selected (Tap to choose customer)',
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(color: Colors.white, fontSize: 12, fontWeight: FontWeight.bold),
+                  filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.black.withValues(alpha: 0.55),
+                      borderRadius: BorderRadius.circular(20),
+                      border: Border.all(color: Colors.white.withValues(alpha: 0.15), width: 1),
+                    ),
+                    child: Row(
+                      children: [
+                        // Target Order Pill
+                        Expanded(
+                          child: InkWell(
+                            onTap: _showOrderSelectionModal,
+                            borderRadius: BorderRadius.circular(12),
+                            child: Row(
+                              children: [
+                                Container(
+                                  padding: const EdgeInsets.all(6),
+                                  decoration: BoxDecoration(
+                                    color: const Color(0xFF38BDF8).withValues(alpha: 0.2),
+                                    shape: BoxShape.circle,
+                                  ),
+                                  child: const Icon(Icons.person_pin_circle_rounded, color: Color(0xFF38BDF8), size: 18),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment: CrossAxisAlignment.start,
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Text(
+                                        activeOrder != null
+                                            ? activeOrder.customer
+                                            : 'No Order Selected',
+                                        overflow: TextOverflow.ellipsis,
+                                        style: const TextStyle(color: Colors.white, fontSize: 13, fontWeight: FontWeight.bold),
+                                      ),
+                                      Text(
+                                        activeOrder != null
+                                            ? 'Order #${activeOrder.orderNumber}'
+                                            : 'Tap to pick order',
+                                        style: const TextStyle(color: Colors.white60, fontSize: 10, fontWeight: FontWeight.w600),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                const Icon(Icons.unfold_more_rounded, color: Colors.white60, size: 18),
+                              ],
                             ),
                           ),
-                          const Icon(Icons.arrow_drop_down, color: Colors.white70, size: 20),
-                        ],
-                      ),
+                        ),
+
+                        const SizedBox(width: 8),
+                        Container(width: 1, height: 28, color: Colors.white24),
+                        const SizedBox(width: 8),
+
+                        // Batch/Single Mode Pill
+                        InkWell(
+                          onTap: () {
+                            setState(() => _isBatchScanMode = !_isBatchScanMode);
+                            HapticFeedback.lightImpact();
+                            DriverNotification.show(
+                              context,
+                              title: _isBatchScanMode ? 'BATCH SCAN MODE' : 'SINGLE SCAN MODE',
+                              message: _isBatchScanMode ? 'Continuous scanning HUD enabled' : 'Single scan confirmation enabled',
+                              backgroundColor: AppColors.mediumBlue,
+                              icon: _isBatchScanMode ? Icons.dynamic_feed_rounded : Icons.crop_free_rounded,
+                            );
+                          },
+                          borderRadius: BorderRadius.circular(10),
+                          child: Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+                            decoration: BoxDecoration(
+                              color: _isBatchScanMode ? const Color(0xFF38BDF8).withValues(alpha: 0.25) : Colors.white10,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(
+                                color: _isBatchScanMode ? const Color(0xFF38BDF8) : Colors.transparent,
+                                width: 1,
+                              ),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Icon(
+                                  _isBatchScanMode ? Icons.dynamic_feed_rounded : Icons.crop_free_rounded,
+                                  size: 16,
+                                  color: _isBatchScanMode ? const Color(0xFF38BDF8) : Colors.white,
+                                ),
+                                const SizedBox(width: 4),
+                                Text(
+                                  _isBatchScanMode ? 'BATCH' : 'SINGLE',
+                                  style: TextStyle(
+                                    color: _isBatchScanMode ? const Color(0xFF38BDF8) : Colors.white,
+                                    fontSize: 10,
+                                    fontWeight: FontWeight.w900,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+
+                        const SizedBox(width: 6),
+
+                        // Torch Button
+                        IconButton(
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                          icon: Icon(
+                            _isTorchOn ? Icons.flash_on_rounded : Icons.flash_off_rounded,
+                            color: _isTorchOn ? const Color(0xFFFDE047) : Colors.white70,
+                            size: 20,
+                          ),
+                          onPressed: () {
+                            setState(() => _isTorchOn = !_isTorchOn);
+                            _scannerController.toggleTorch();
+                          },
+                        ),
+
+                        // Camera Switch Button
+                        IconButton(
+                          padding: EdgeInsets.zero,
+                          constraints: const BoxConstraints(minWidth: 34, minHeight: 34),
+                          icon: const Icon(Icons.flip_camera_ios_rounded, color: Colors.white70, size: 20),
+                          onPressed: () => _scannerController.switchCamera(),
+                        ),
+                      ],
                     ),
                   ),
                 ),
@@ -4435,16 +4486,16 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
             // Bottom Real-time Status Overlay Result Card
             if (_scanResultState != null && _latestToggleResult != null)
               Positioned(
-                bottom: _batchScannedList.isNotEmpty ? 130 : 24,
+                bottom: _batchScannedList.isNotEmpty ? 130 : 30,
                 left: 16,
                 right: 16,
                 child: _buildResultOverlayCard(),
               ),
 
-            // Batch Scanned Drawer at Bottom
+            // Batch Scanned Drawer Bar at Bottom
             if (_batchScannedList.isNotEmpty)
               Positioned(
-                bottom: 16,
+                bottom: 20,
                 left: 16,
                 right: 16,
                 child: _buildBatchListBar(),
@@ -4456,92 +4507,161 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
   }
 
   Widget _buildScanFrame() {
-    final frameColor = _isProcessingCode ? AppColors.warningAmber : const Color(0xFF38BDF8);
+    final accentColor = _isProcessingCode
+        ? AppColors.warningAmber
+        : const Color(0xFF38BDF8);
 
     return Center(
       child: SizedBox(
-        width: 260,
-        height: 260,
+        width: 250,
+        height: 250,
         child: Stack(
           children: [
+            // Outer Frame Glass Glow
             Container(
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(20),
+                borderRadius: BorderRadius.circular(24),
                 border: Border.all(
-                  color: frameColor.withValues(alpha: 0.3),
-                  width: 2,
+                  color: accentColor.withValues(alpha: 0.25),
+                  width: 1.5,
                 ),
+                boxShadow: [
+                  BoxShadow(
+                    color: accentColor.withValues(alpha: 0.1),
+                    blurRadius: 20,
+                    spreadRadius: 2,
+                  ),
+                ],
               ),
             ),
-            // Top Left
+
+            // Top Left Corner Laser Bracket
             Positioned(
               top: 0, left: 0,
               child: Container(
-                width: 32, height: 32,
+                width: 36, height: 36,
                 decoration: BoxDecoration(
-                  border: Border(top: BorderSide(color: frameColor, width: 4), left: BorderSide(color: frameColor, width: 4)),
-                  borderRadius: const BorderRadius.only(topLeft: Radius.circular(20)),
+                  border: Border(top: BorderSide(color: accentColor, width: 4), left: BorderSide(color: accentColor, width: 4)),
+                  borderRadius: const BorderRadius.only(topLeft: Radius.circular(24)),
                 ),
               ),
             ),
-            // Top Right
+            // Top Right Corner Laser Bracket
             Positioned(
               top: 0, right: 0,
               child: Container(
-                width: 32, height: 32,
+                width: 36, height: 36,
                 decoration: BoxDecoration(
-                  border: Border(top: BorderSide(color: frameColor, width: 4), right: BorderSide(color: frameColor, width: 4)),
-                  borderRadius: const BorderRadius.only(topRight: Radius.circular(20)),
+                  border: Border(top: BorderSide(color: accentColor, width: 4), right: BorderSide(color: accentColor, width: 4)),
+                  borderRadius: const BorderRadius.only(topRight: Radius.circular(24)),
                 ),
               ),
             ),
-            // Bottom Left
+            // Bottom Left Corner Laser Bracket
             Positioned(
               bottom: 0, left: 0,
               child: Container(
-                width: 32, height: 32,
+                width: 36, height: 36,
                 decoration: BoxDecoration(
-                  border: Border(bottom: BorderSide(color: frameColor, width: 4), left: BorderSide(color: frameColor, width: 4)),
-                  borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(20)),
+                  border: Border(bottom: BorderSide(color: accentColor, width: 4), left: BorderSide(color: accentColor, width: 4)),
+                  borderRadius: const BorderRadius.only(bottomLeft: Radius.circular(24)),
                 ),
               ),
             ),
-            // Bottom Right
+            // Bottom Right Corner Laser Bracket
             Positioned(
               bottom: 0, right: 0,
               child: Container(
-                width: 32, height: 32,
+                width: 36, height: 36,
                 decoration: BoxDecoration(
-                  border: Border(bottom: BorderSide(color: frameColor, width: 4), right: BorderSide(color: frameColor, width: 4)),
-                  borderRadius: const BorderRadius.only(bottomRight: Radius.circular(20)),
+                  border: Border(bottom: BorderSide(color: accentColor, width: 4), right: BorderSide(color: accentColor, width: 4)),
+                  borderRadius: const BorderRadius.only(bottomRight: Radius.circular(24)),
                 ),
               ),
             ),
-            if (_isProcessingCode)
-              const Center(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    SizedBox(
-                      width: 36,
-                      height: 36,
-                      child: CircularProgressIndicator(
-                        color: AppColors.warningAmber,
-                        strokeWidth: 3,
+
+            // Animated Scanning Beam Laser
+            AnimatedBuilder(
+              animation: _scanAnimation,
+              builder: (context, child) {
+                return Positioned(
+                  top: _scanAnimation.value * 210 + 10,
+                  left: 12,
+                  right: 12,
+                  child: Container(
+                    height: 3,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          accentColor.withValues(alpha: 0.0),
+                          accentColor,
+                          accentColor.withValues(alpha: 0.0),
+                        ],
                       ),
+                      boxShadow: [
+                        BoxShadow(
+                          color: accentColor,
+                          blurRadius: 10,
+                          spreadRadius: 2,
+                        ),
+                      ],
                     ),
-                    SizedBox(height: 12),
-                    Text(
-                      'Processing Gallon QR Code...',
-                      style: TextStyle(
-                        color: AppColors.warningAmber,
-                        fontSize: 12,
-                        fontWeight: FontWeight.bold,
-                      ),
-                    ),
-                  ],
+                  ),
+                );
+              },
+            ),
+
+            // Center Crosshair Indicator
+            Center(
+              child: Container(
+                width: 14,
+                height: 14,
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: accentColor.withValues(alpha: 0.5), width: 1.5),
                 ),
               ),
+            ),
+
+            // Concise HUD Top Status Badge
+            Positioned(
+              top: 14,
+              left: 0,
+              right: 0,
+              child: Center(
+                child: Container(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  decoration: BoxDecoration(
+                    color: Colors.black.withValues(alpha: 0.65),
+                    borderRadius: BorderRadius.circular(10),
+                    border: Border.all(color: accentColor.withValues(alpha: 0.3), width: 1),
+                  ),
+                  child: Row(
+                    mainAxisSize: MainAxisSize.min,
+                    children: [
+                      Container(
+                        width: 6,
+                        height: 6,
+                        decoration: BoxDecoration(
+                          color: accentColor,
+                          shape: BoxShape.circle,
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Text(
+                        _isProcessingCode ? 'VERIFYING...' : 'SCANNER ACTIVE',
+                        style: TextStyle(
+                          color: accentColor,
+                          fontSize: 9,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.0,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
           ],
         ),
       ),
@@ -4558,43 +4678,50 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
     final notes = _latestToggleResult!['notes']?.toString() ?? '';
     final isBorrowed = newStatus == 'BORROWED';
 
-    final fgColor = isBorrowed ? AppColors.successGreen : AppColors.mediumBlue;
-    final bgColor = isBorrowed ? AppColors.successBg : AppColors.lightBg;
+    final fgColor = isBorrowed ? AppColors.successGreen : const Color(0xFF38BDF8);
 
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 16, offset: Offset(0, 8))],
-        border: Border.all(color: fgColor, width: 2),
-      ),
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(20),
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 16, sigmaY: 16),
+        child: Container(
+          padding: const EdgeInsets.all(16),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0F172A).withValues(alpha: 0.9),
+            borderRadius: BorderRadius.circular(20),
+            border: Border.all(color: fgColor.withValues(alpha: 0.5), width: 1.5),
+            boxShadow: [
+              BoxShadow(
+                color: fgColor.withValues(alpha: 0.15),
+                blurRadius: 16,
+                offset: const Offset(0, 6),
+              ),
+            ],
+          ),
+          child: Row(
             children: [
               Container(
-                padding: const EdgeInsets.all(8),
-                decoration: BoxDecoration(color: bgColor, shape: BoxShape.circle),
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: fgColor.withValues(alpha: 0.15),
+                  shape: BoxShape.circle,
+                ),
                 child: Icon(isBorrowed ? Icons.outbox_rounded : Icons.inbox_rounded, color: fgColor, size: 22),
               ),
               const SizedBox(width: 12),
               Expanded(
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.start,
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    Wrap(
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      spacing: 6,
-                      runSpacing: 4,
+                    Row(
                       children: [
-                        Text('Gallon $gallonCode', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: AppColors.darkText)),
+                        Text('Gallon $gallonCode', style: const TextStyle(fontWeight: FontWeight.w900, fontSize: 14, color: Colors.white)),
+                        const SizedBox(width: 8),
                         Container(
                           padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
-                          decoration: BoxDecoration(color: bgColor, borderRadius: BorderRadius.circular(6)),
-                          child: Text('$prevStatus ➔ $newStatus', style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: fgColor)),
+                          decoration: BoxDecoration(color: fgColor.withValues(alpha: 0.2), borderRadius: BorderRadius.circular(6)),
+                          child: Text('$prevStatus ➔ $newStatus', style: TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: fgColor)),
                         ),
                       ],
                     ),
@@ -4603,53 +4730,62 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
                       isBorrowed ? 'Lended to $customerName' : 'Returned to Station Inventory',
                       style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: fgColor),
                     ),
+                    if (notes.isNotEmpty) ...[
+                      const SizedBox(height: 2),
+                      Text(
+                        notes,
+                        style: const TextStyle(fontSize: 10, color: Colors.white60, fontStyle: FontStyle.italic),
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ],
                   ],
                 ),
               ),
               IconButton(
-                icon: const Icon(Icons.close, size: 18, color: AppColors.grayText),
+                icon: const Icon(Icons.close_rounded, size: 18, color: Colors.white60),
                 onPressed: () => setState(() => _latestToggleResult = null),
               ),
             ],
           ),
-          const SizedBox(height: 8),
-          Text(
-            notes,
-            style: const TextStyle(fontSize: 11, color: AppColors.slateText, fontStyle: FontStyle.italic),
-          ),
-        ],
+        ),
       ),
     );
   }
 
   Widget _buildBatchListBar() {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
-      decoration: BoxDecoration(
-        color: const Color(0xFF0F172A),
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.4)),
-      ),
-      child: Row(
-        children: [
-          const Icon(Icons.inventory_2_rounded, color: Color(0xFF38BDF8), size: 20),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Text(
-              'Batch Session: ${_batchScannedList.length} Gallons Processed',
-              style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 13),
-            ),
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(16),
+      child: BackdropFilter(
+        filter: ui.ImageFilter.blur(sigmaX: 12, sigmaY: 12),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+          decoration: BoxDecoration(
+            color: const Color(0xFF0F172A).withValues(alpha: 0.85),
+            borderRadius: BorderRadius.circular(16),
+            border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.3)),
           ),
-          TextButton(
-            onPressed: () => _showBatchDetailsSheet(),
-            style: TextButton.styleFrom(
-              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-              minimumSize: Size.zero,
-              tapTargetSize: MaterialTapTargetSize.shrinkWrap,
-            ),
-            child: const Text('VIEW ALL', style: TextStyle(color: Color(0xFF38BDF8), fontWeight: FontWeight.bold, fontSize: 12)),
+          child: Row(
+            children: [
+              const Icon(Icons.inventory_2_rounded, color: Color(0xFF38BDF8), size: 20),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  'Batch Session: ${_batchScannedList.length} Gallons Scanned',
+                  style: const TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 12),
+                ),
+              ),
+              TextButton(
+                onPressed: () => _showBatchDetailsSheet(),
+                style: TextButton.styleFrom(
+                  padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                  minimumSize: Size.zero,
+                  tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                ),
+                child: const Text('VIEW ALL', style: TextStyle(color: Color(0xFF38BDF8), fontWeight: FontWeight.w900, fontSize: 11)),
+              ),
+            ],
           ),
-        ],
+        ),
       ),
     );
   }
@@ -4657,11 +4793,11 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
   void _showBatchDetailsSheet() {
     showModalBottomSheet(
       context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+      backgroundColor: const Color(0xFF0F172A),
+      shape: const RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(28))),
       builder: (context) {
         return Container(
-          padding: const EdgeInsets.all(20),
+          padding: const EdgeInsets.all(24),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             crossAxisAlignment: CrossAxisAlignment.start,
@@ -4669,16 +4805,16 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
               Row(
                 mainAxisAlignment: MainAxisAlignment.spaceBetween,
                 children: [
-                  Text('Batch Scanned Gallons (${_batchScannedList.length})', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.bold, color: AppColors.navy)),
-                  IconButton(icon: const Icon(Icons.close), onPressed: () => Navigator.pop(context)),
+                  Text('Batch Scanned Items (${_batchScannedList.length})', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: Colors.white)),
+                  IconButton(icon: const Icon(Icons.close_rounded, color: Colors.white70), onPressed: () => Navigator.pop(context)),
                 ],
               ),
-              const SizedBox(height: 10),
+              const SizedBox(height: 12),
               Flexible(
                 child: ListView.separated(
                   shrinkWrap: true,
                   itemCount: _batchScannedList.length,
-                  separatorBuilder: (_, __) => const Divider(height: 1),
+                  separatorBuilder: (_, __) => const Divider(color: Colors.white12, height: 1),
                   itemBuilder: (context, index) {
                     final item = _batchScannedList[index];
                     final code = item['gallon_code'] ?? 'N/A';
@@ -4689,20 +4825,20 @@ class _QrScannerScreenState extends State<QrScannerScreen> {
                     return ListTile(
                       contentPadding: EdgeInsets.zero,
                       leading: CircleAvatar(
-                        backgroundColor: isBorrowed ? AppColors.successBg : AppColors.lightBg,
-                        child: Icon(isBorrowed ? Icons.outbox_rounded : Icons.inbox_rounded, color: isBorrowed ? AppColors.successGreen : AppColors.mediumBlue, size: 18),
+                        backgroundColor: isBorrowed ? AppColors.successGreen.withValues(alpha: 0.15) : const Color(0xFF38BDF8).withValues(alpha: 0.15),
+                        child: Icon(isBorrowed ? Icons.outbox_rounded : Icons.inbox_rounded, color: isBorrowed ? AppColors.successGreen : const Color(0xFF38BDF8), size: 18),
                       ),
-                      title: Text('Gallon $code', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14)),
-                      subtitle: Text(item['notes'] ?? '', style: const TextStyle(fontSize: 11, color: AppColors.slateText)),
+                      title: Text('Gallon $code', style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 14, color: Colors.white)),
+                      subtitle: Text(item['notes'] ?? '', style: const TextStyle(fontSize: 11, color: Colors.white60)),
                       trailing: Container(
                         padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
                         decoration: BoxDecoration(
-                          color: isBorrowed ? AppColors.successBg : AppColors.lightBg,
+                          color: isBorrowed ? AppColors.successGreen.withValues(alpha: 0.15) : const Color(0xFF38BDF8).withValues(alpha: 0.15),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         child: Text(
                           '$prevSt ➔ $newSt',
-                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: isBorrowed ? AppColors.successGreen : AppColors.mediumBlue),
+                          style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: isBorrowed ? AppColors.successGreen : const Color(0xFF38BDF8)),
                         ),
                       ),
                     );
@@ -5376,7 +5512,8 @@ class _CompletedDeliveriesScreenState extends State<CompletedDeliveriesScreen> {
 }
 
 // -----------------------------------------------------------------------------
-// TAB 4: DRIVER PROFILE SCREEN
+// -----------------------------------------------------------------------------
+// TAB 4: DRIVER PROFILE SCREEN (High-Tech Telemetry & Organized Profile)
 // -----------------------------------------------------------------------------
 
 class DriverProfileScreen extends StatefulWidget {
@@ -5460,26 +5597,26 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
       backgroundColor: Colors.transparent,
       builder: (context) {
         return Container(
-          height: MediaQuery.of(context).size.height * 0.70,
+          height: MediaQuery.of(context).size.height * 0.75,
           decoration: const BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
           ),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
               const SizedBox(height: 12),
               Container(
-                width: 40,
-                height: 4,
+                width: 44,
+                height: 5,
                 decoration: BoxDecoration(
                   color: Colors.grey[300],
-                  borderRadius: BorderRadius.circular(2),
+                  borderRadius: BorderRadius.circular(3),
                 ),
               ),
               const SizedBox(height: 16),
               Padding(
-                padding: const EdgeInsets.symmetric(horizontal: 20),
+                padding: const EdgeInsets.symmetric(horizontal: 24),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -5490,7 +5627,7 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                           'Customer Feedbacks',
                           style: TextStyle(
                             fontSize: 18,
-                            fontWeight: FontWeight.bold,
+                            fontWeight: FontWeight.w900,
                             color: AppColors.midnightBlue,
                           ),
                         ),
@@ -5504,20 +5641,20 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                       ],
                     ),
                     Container(
-                      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
                       decoration: BoxDecoration(
                         color: AppColors.mediumBlue.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(12),
+                        borderRadius: BorderRadius.circular(14),
                       ),
                       child: Row(
                         children: [
-                          const Icon(Icons.star_rounded, color: Color(0xFFF59E0B), size: 18),
-                          const SizedBox(width: 4),
+                          const Icon(Icons.star_rounded, color: Color(0xFFF59E0B), size: 20),
+                          const SizedBox(width: 6),
                           Text(
                             _avgRating.toStringAsFixed(1),
                             style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
+                              fontSize: 15,
+                              fontWeight: FontWeight.w900,
                               color: AppColors.midnightBlue,
                             ),
                           ),
@@ -5553,7 +5690,7 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
                             ),
                           )
                         : ListView.separated(
-                            padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+                            padding: const EdgeInsets.fromLTRB(24, 0, 24, 24),
                             itemCount: _reviews.length,
                             separatorBuilder: (context, index) => const Divider(height: 20),
                             itemBuilder: (context, index) {
@@ -5638,8 +5775,17 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
     return Scaffold(
       backgroundColor: AppColors.scaffold,
       appBar: AppBar(
-        title: const Text('Driver Profile'),
+        title: const Text(
+          'DRIVER TELEMETRY & PROFILE',
+          style: TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w900,
+            letterSpacing: 0.8,
+            color: AppColors.midnightBlue,
+          ),
+        ),
         backgroundColor: Colors.transparent,
+        centerTitle: true,
       ),
       body: Container(
         decoration: const BoxDecoration(
@@ -5649,202 +5795,447 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
           onRefresh: _fetchReviews,
           child: SingleChildScrollView(
             physics: const AlwaysScrollableScrollPhysics(),
-            padding: const EdgeInsets.fromLTRB(20, 12, 20, 120),
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 120),
             child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Center(
-                child: Container(
-                  padding: const EdgeInsets.all(20),
-                  decoration: const BoxDecoration(
-                    color: Color(0xFFE0F2FE),
-                    shape: BoxShape.circle,
+                // 1. Futuristic Hero Driver Header Card
+                _buildHeroHeader(fullName, role, status),
+
+                const SizedBox(height: 20),
+
+                // 2. Telemetry Quick Metrics Row (4 Cards)
+                _buildQuickMetricsGrid(status, vehicleNum),
+
+                const SizedBox(height: 24),
+
+                // 3. Category Section 1: Driver Credentials & Contact Info
+                _buildSectionTitle('DRIVER CREDENTIALS & CONTACT', Icons.badge_outlined),
+                const SizedBox(height: 12),
+                GlassCard(
+                  padding: const EdgeInsets.all(18),
+                  borderRadius: 20,
+                  child: Column(
+                    children: [
+                      _buildProfileItemTile(Icons.email_outlined, 'EMAIL ADDRESS', email),
+                      const SizedBox(height: 12),
+                      _buildProfileItemTile(Icons.phone_outlined, 'MOBILE PHONE', phone),
+                      const SizedBox(height: 12),
+                      _buildProfileItemTile(Icons.admin_panel_settings_outlined, 'ROLE PERMISSIONS', role),
+                      const SizedBox(height: 12),
+                      _buildProfileItemTile(Icons.location_on_outlined, 'RESIDENTIAL ADDRESS', address),
+                    ],
                   ),
-                  child: const Icon(Icons.person, size: 56, color: AppColors.primary),
                 ),
-              ),
-              const SizedBox(height: 16),
-              Text(
-                fullName,
-                style: const TextStyle(fontSize: 22, fontWeight: FontWeight.bold, color: AppColors.darkText),
-              ),
-              const SizedBox(height: 4),
-              Container(
-                padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
-                decoration: BoxDecoration(
-                  color: AppColors.successBg,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Text(
-                  status,
-                  style: const TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.successGreen),
-                ),
-              ),
-              const SizedBox(height: 24),
 
-              GlassCard(
-                padding: const EdgeInsets.all(20),
-                borderRadius: 16,
-                child: Column(
-                  children: [
-                    _infoRow(Icons.email_outlined, 'Email', email),
-                    const Divider(height: 20),
-                    _infoRow(Icons.phone_outlined, 'Phone', phone),
-                    const Divider(height: 20),
-                    _infoRow(Icons.badge_outlined, 'Role', role),
-                    const Divider(height: 20),
-                    _infoRow(Icons.directions_car_outlined, 'Vehicle / Plate', vehicleNum),
-                    const Divider(height: 20),
-                    _infoRow(Icons.store_outlined, 'Water Station', stationInfo.name),
-                    if (stationInfo.address != null && stationInfo.address!.isNotEmpty) ...[
-                      const Divider(height: 20),
-                      _infoRow(Icons.storefront_outlined, 'Station Address', stationInfo.address!),
-                    ],
-                    if (stationInfo.radiusKm != null) ...[
-                      const Divider(height: 20),
-                      _infoRow(Icons.radar_rounded, 'Geofence Radius', '${stationInfo.radiusKm!.toStringAsFixed(1)} km'),
-                    ],
-                    const Divider(height: 20),
-                    _infoRow(Icons.location_on_outlined, 'Driver Address', address),
-                  ],
-                ),
-              ),
+                const SizedBox(height: 24),
 
-              const SizedBox(height: 24),
-
-              // LIVE GPS LOCATION CARD
-              GlassCard(
-                padding: const EdgeInsets.all(20),
-                borderRadius: 16,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Row(
-                            children: [
-                              Container(
-                                padding: const EdgeInsets.all(8),
-                                decoration: BoxDecoration(
-                                  color: AppColors.successGreen.withValues(alpha: 0.12),
-                                  shape: BoxShape.circle,
-                                ),
-                                child: const Icon(Icons.my_location_rounded, color: AppColors.successGreen, size: 20),
-                              ),
-                              const SizedBox(width: 10),
-                              const Expanded(
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Text(
-                                      'YOUR LIVE GPS LOCATION',
-                                      style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.darkText),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                    Text(
-                                      'Realtime synced to Admin & Customer',
-                                      style: TextStyle(fontSize: 10, color: AppColors.grayText),
-                                      overflow: TextOverflow.ellipsis,
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
-                          decoration: BoxDecoration(
-                            color: AppColors.successBg,
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: AppColors.successBorder),
-                          ),
-                          child: const Row(
-                            children: [
-                              Icon(Icons.circle, color: AppColors.successGreen, size: 8),
-                              SizedBox(width: 4),
-                              Text(
-                                'ACTIVE',
-                                style: TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: AppColors.successGreen),
-                              ),
-                            ],
-                          ),
-                        ),
+                // 4. Category Section 2: Water Station Telemetry & Geofence
+                _buildSectionTitle('STATION ASSIGNMENT & FLEET', Icons.storefront_rounded),
+                const SizedBox(height: 12),
+                GlassCard(
+                  padding: const EdgeInsets.all(18),
+                  borderRadius: 20,
+                  child: Column(
+                    children: [
+                      _buildProfileItemTile(Icons.water_drop_outlined, 'ASSIGNED STATION', stationInfo.name),
+                      if (stationInfo.address != null && stationInfo.address!.isNotEmpty) ...[
+                        const SizedBox(height: 12),
+                        _buildProfileItemTile(Icons.store_outlined, 'STATION ADDRESS', stationInfo.address!),
                       ],
-                    ),
-                    const SizedBox(height: 14),
-                    Container(
-                      padding: const EdgeInsets.all(12),
-                      decoration: BoxDecoration(
-                        color: AppColors.scaffold.withValues(alpha: 0.5),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: AppColors.border),
-                      ),
-                      child: Row(
+                      if (stationInfo.radiusKm != null) ...[
+                        const SizedBox(height: 12),
+                        _buildProfileItemTile(Icons.radar_rounded, 'GEOFENCE RADIUS', '${stationInfo.radiusKm!.toStringAsFixed(1)} km'),
+                      ],
+                      const SizedBox(height: 12),
+                      _buildProfileItemTile(Icons.local_shipping_outlined, 'VEHICLE / PLATE NO.', vehicleNum),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 24),
+
+                // 5. Category Section 3: Live Satellite GPS Telemetry
+                _buildSectionTitle('LIVE SATELLITE TELEMETRY', Icons.my_location_rounded),
+                const SizedBox(height: 12),
+                GlassCard(
+                  padding: const EdgeInsets.all(18),
+                  borderRadius: 20,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
                         children: [
-                          const Icon(Icons.location_on_outlined, color: AppColors.primary, size: 18),
-                          const SizedBox(width: 8),
+                          Container(
+                            padding: const EdgeInsets.all(10),
+                            decoration: BoxDecoration(
+                              color: AppColors.successGreen.withValues(alpha: 0.12),
+                              shape: BoxShape.circle,
+                            ),
+                            child: const Icon(Icons.satellite_alt_rounded, color: AppColors.successGreen, size: 22),
+                          ),
+                          const SizedBox(width: 12),
                           Expanded(
-                            child: Text(
-                              widget.currentPosition != null
-                                  ? 'Lat: ${widget.currentPosition!.latitude.toStringAsFixed(5)}, Lng: ${widget.currentPosition!.longitude.toStringAsFixed(5)}'
-                                  : 'Fetching current GPS coordinates...',
-                              style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold, color: AppColors.darkText),
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                const Text(
+                                  'REALTIME GPS FEED',
+                                  style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppColors.darkText),
+                                ),
+                                Text(
+                                  widget.currentPosition != null
+                                      ? 'Active signal • Synced to Supabase Cloud'
+                                      : 'Acquiring GPS fix...',
+                                  style: const TextStyle(fontSize: 11, color: AppColors.grayText),
+                                ),
+                              ],
+                            ),
+                          ),
+                          Container(
+                            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 4),
+                            decoration: BoxDecoration(
+                              color: AppColors.successBg,
+                              borderRadius: BorderRadius.circular(10),
+                              border: Border.all(color: AppColors.successBorder),
+                            ),
+                            child: const Row(
+                              children: [
+                                Icon(Icons.circle, color: AppColors.successGreen, size: 8),
+                                SizedBox(width: 4),
+                                Text(
+                                  'LIVE',
+                                  style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: AppColors.successGreen),
+                                ),
+                              ],
                             ),
                           ),
                         ],
                       ),
-                    ),
-                    const SizedBox(height: 14),
-                    LiquidButton(
-                      label: 'VIEW LIVE MAP',
-                      icon: Icons.map_rounded,
-                      color: AppColors.mediumBlue,
-                      onTap: () {
-                        final pos = widget.currentPosition;
-                        final stationInfo = StationInfo.fromMap(widget.profileData);
-                        InAppMapWidget.showDriverLiveMapModal(
-                          context,
-                          location: pos != null ? LatLng(pos.latitude, pos.longitude) : null,
-                          driverName: widget.driverName,
-                          stationName: stationInfo.name,
-                          stationAddress: stationInfo.address,
-                          stationLocation: stationInfo.location,
-                          geofenceRadiusKm: stationInfo.radiusKm,
-                        );
-                      },
-                    ),
-                  ],
+                      const SizedBox(height: 14),
+                      Container(
+                        padding: const EdgeInsets.all(12),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFF0F172A),
+                          borderRadius: BorderRadius.circular(14),
+                        ),
+                        child: Row(
+                          children: [
+                            const Icon(Icons.code_rounded, color: Color(0xFF38BDF8), size: 18),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: Text(
+                                widget.currentPosition != null
+                                    ? 'LAT: ${widget.currentPosition!.latitude.toStringAsFixed(5)}  |  LNG: ${widget.currentPosition!.longitude.toStringAsFixed(5)}'
+                                    : 'Fetching GPS coordinates...',
+                                style: const TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.bold,
+                                  color: Color(0xFF38BDF8),
+                                  fontFamily: 'monospace',
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 14),
+                      LiquidButton(
+                        label: 'OPEN LIVE TRACKING MAP',
+                        icon: Icons.map_rounded,
+                        color: AppColors.mediumBlue,
+                        onTap: () {
+                          final pos = widget.currentPosition;
+                          final stationInfo = StationInfo.fromMap(widget.profileData);
+                          InAppMapWidget.showDriverLiveMapModal(
+                            context,
+                            location: pos != null ? LatLng(pos.latitude, pos.longitude) : null,
+                            driverName: widget.driverName,
+                            stationName: stationInfo.name,
+                            stationAddress: stationInfo.address,
+                            stationLocation: stationInfo.location,
+                            geofenceRadiusKm: stationInfo.radiusKm,
+                          );
+                        },
+                      ),
+                    ],
+                  ),
                 ),
-              ),
 
-              const SizedBox(height: 24),
+                const SizedBox(height: 24),
 
-              // CUSTOMER FEEDBACK TIMELINE (Interactive Medium Blue Card)
-              _buildFeedbackSection(),
+                // 6. Category Section 4: Customer Performance & Feedbacks
+                _buildSectionTitle('SERVICE PERFORMANCE & RATINGS', Icons.star_outline_rounded),
+                const SizedBox(height: 12),
+                _buildFeedbackSection(),
 
-              const SizedBox(height: 32),
+                const SizedBox(height: 32),
 
-              LiquidButton(
-                label: 'LOG OUT',
-                onTap: () async {
-                  await SupabaseService.signOut();
-                  if (!context.mounted) return;
-                  Navigator.pushReplacement(
-                    context,
-                    MaterialPageRoute(builder: (context) => const LoginScreen()),
-                  );
-                },
-                icon: Icons.logout_rounded,
-                color: AppColors.errorRed.withValues(alpha: 0.1),
-                textColor: AppColors.errorRed,
-              ),
-              const SizedBox(height: 40),
-            ],
+                // 7. Log Out Action Button
+                LiquidButton(
+                  label: 'LOG OUT OF FLEET SESSION',
+                  onTap: () async {
+                    await SupabaseService.signOut();
+                    if (!context.mounted) return;
+                    Navigator.pushReplacement(
+                      context,
+                      MaterialPageRoute(builder: (context) => const LoginScreen()),
+                    );
+                  },
+                  icon: Icons.logout_rounded,
+                  color: AppColors.errorRed.withValues(alpha: 0.1),
+                  textColor: AppColors.errorRed,
+                ),
+
+                const SizedBox(height: 20),
+
+                // System Footer
+                const Center(
+                  child: Column(
+                    children: [
+                      Text(
+                        'AquaSync Driver Terminal v1.0.0',
+                        style: TextStyle(fontSize: 11, fontWeight: FontWeight.bold, color: AppColors.grayText),
+                      ),
+                      SizedBox(height: 2),
+                      Text(
+                        'Powered by Supabase Realtime Telemetry',
+                        style: TextStyle(fontSize: 10, color: AppColors.grayText),
+                      ),
+                    ],
+                  ),
+                ),
+
+                const SizedBox(height: 40),
+              ],
+            ),
           ),
         ),
       ),
+    );
+  }
+
+  Widget _buildHeroHeader(String fullName, String role, String status) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.all(22),
+      decoration: BoxDecoration(
+        gradient: AppGradients.ocean,
+        borderRadius: BorderRadius.circular(24),
+        boxShadow: AppDesign.premiumShadow,
+      ),
+      child: Row(
+        children: [
+          // Glowing Dual Avatar Ring
+          Stack(
+            children: [
+              Container(
+                padding: const EdgeInsets.all(4),
+                decoration: BoxDecoration(
+                  shape: BoxShape.circle,
+                  border: Border.all(color: const Color(0xFF38BDF8), width: 2),
+                  boxShadow: [
+                    BoxShadow(
+                      color: const Color(0xFF38BDF8).withValues(alpha: 0.3),
+                      blurRadius: 12,
+                    ),
+                  ],
+                ),
+                child: CircleAvatar(
+                  radius: 30,
+                  backgroundColor: Colors.white24,
+                  child: Text(
+                    fullName.isNotEmpty ? fullName[0].toUpperCase() : 'D',
+                    style: const TextStyle(fontSize: 26, fontWeight: FontWeight.w900, color: Colors.white),
+                  ),
+                ),
+              ),
+              Positioned(
+                bottom: 2,
+                right: 2,
+                child: Container(
+                  width: 14,
+                  height: 14,
+                  decoration: BoxDecoration(
+                    color: AppColors.successGreen,
+                    shape: BoxShape.circle,
+                    border: Border.all(color: AppColors.darkRoyalBlue, width: 2.5),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+                      decoration: BoxDecoration(
+                        color: Colors.white.withValues(alpha: 0.2),
+                        borderRadius: BorderRadius.circular(8),
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          const Icon(Icons.verified_rounded, color: Color(0xFF38BDF8), size: 12),
+                          const SizedBox(width: 4),
+                          Text(
+                            role,
+                            style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: 0.5),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  fullName,
+                  style: const TextStyle(fontSize: 20, fontWeight: FontWeight.w900, color: Colors.white, letterSpacing: -0.3),
+                  overflow: TextOverflow.ellipsis,
+                ),
+                const SizedBox(height: 4),
+                Row(
+                  children: [
+                    Container(
+                      width: 8,
+                      height: 8,
+                      decoration: const BoxDecoration(
+                        color: AppColors.successGreen,
+                        shape: BoxShape.circle,
+                      ),
+                    ),
+                    const SizedBox(width: 6),
+                    Text(
+                      'STATUS: $status',
+                      style: const TextStyle(fontSize: 10, fontWeight: FontWeight.bold, color: Colors.white70, letterSpacing: 0.8),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildQuickMetricsGrid(String status, String vehicleNum) {
+    return Row(
+      children: [
+        Expanded(
+          child: _metricCard('RATING', _avgRating.toStringAsFixed(1), Icons.star_rounded, const Color(0xFFF59E0B)),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _metricCard('REVIEWS', _reviews.length.toString(), Icons.rate_review_rounded, AppColors.mediumBlue),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _metricCard('STATUS', status, Icons.verified_user_rounded, AppColors.successGreen),
+        ),
+        const SizedBox(width: 10),
+        Expanded(
+          child: _metricCard('VEHICLE', vehicleNum.split(' ').first, Icons.local_shipping_rounded, const Color(0xFF0F2573)),
+        ),
+      ],
+    );
+  }
+
+  Widget _metricCard(String label, String value, IconData icon, Color color) {
+    return Container(
+      padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(16),
+        border: Border.all(color: AppColors.border),
+        boxShadow: [
+          BoxShadow(
+            color: color.withValues(alpha: 0.08),
+            blurRadius: 10,
+            offset: const Offset(0, 4),
+          ),
+        ],
+      ),
+      child: Column(
+        children: [
+          Icon(icon, size: 20, color: color),
+          const SizedBox(height: 6),
+          Text(
+            value,
+            style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900, color: AppColors.darkText),
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            style: const TextStyle(fontSize: 9, fontWeight: FontWeight.bold, color: AppColors.grayText),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSectionTitle(String title, IconData icon) {
+    return Row(
+      children: [
+        Icon(icon, size: 16, color: AppColors.mediumBlue),
+        const SizedBox(width: 8),
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 11,
+            fontWeight: FontWeight.w900,
+            color: AppColors.darkRoyalBlue,
+            letterSpacing: 1.0,
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildProfileItemTile(IconData icon, String label, String value) {
+    return Container(
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: AppColors.scaffold.withValues(alpha: 0.5),
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: AppColors.border.withValues(alpha: 0.6)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            padding: const EdgeInsets.all(8),
+            decoration: BoxDecoration(
+              color: AppColors.mediumBlue.withValues(alpha: 0.1),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, size: 18, color: AppColors.mediumBlue),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  label,
+                  style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w900, color: AppColors.grayText, letterSpacing: 0.5),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  value,
+                  style: const TextStyle(fontSize: 13, fontWeight: FontWeight.bold, color: AppColors.darkText),
+                  softWrap: true,
+                ),
+              ],
+            ),
+          ),
+        ],
       ),
     );
   }
@@ -5852,245 +6243,189 @@ class _DriverProfileScreenState extends State<DriverProfileScreen> {
   Widget _buildFeedbackSection() {
     final latestReview = _reviews.isNotEmpty ? _reviews.first : null;
 
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Row(
-          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-          children: [
-            const Text(
-              'LATEST CUSTOMER FEEDBACK',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.bold,
-                color: AppColors.grayText,
-                letterSpacing: 0.8,
+    return Material(
+      color: Colors.transparent,
+      borderRadius: BorderRadius.circular(24),
+      child: InkWell(
+        onTap: _showFeedbackBottomSheet,
+        borderRadius: BorderRadius.circular(24),
+        child: Container(
+          width: double.infinity,
+          padding: const EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            gradient: AppGradients.mediumBluePanel,
+            borderRadius: BorderRadius.circular(24),
+            boxShadow: [
+              BoxShadow(
+                color: AppColors.darkRoyalBlue.withValues(alpha: 0.25),
+                blurRadius: 16,
+                offset: const Offset(0, 8),
               ),
-            ),
-            if (_reviews.isNotEmpty)
-              GestureDetector(
-                onTap: _showFeedbackBottomSheet,
-                child: const Text(
-                  'View All',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.bold,
-                    color: AppColors.mediumBlue,
-                  ),
-                ),
-              ),
-          ],
-        ),
-        const SizedBox(height: 12),
-        Material(
-          color: Colors.transparent,
-          borderRadius: BorderRadius.circular(20),
-          child: InkWell(
-            onTap: _showFeedbackBottomSheet,
-            borderRadius: BorderRadius.circular(20),
-            child: Container(
-              width: double.infinity,
-              padding: const EdgeInsets.all(20),
-              decoration: BoxDecoration(
-                gradient: AppGradients.mediumBluePanel,
-                borderRadius: BorderRadius.circular(20),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppColors.mediumBlue.withValues(alpha: 0.25),
-                    blurRadius: 12,
-                    offset: const Offset(0, 6),
-                  ),
-                ],
-              ),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Row(
-                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          const Text(
-                            'SERVICE PERFORMANCE',
-                            style: TextStyle(
-                              color: Colors.white70,
-                              fontSize: 10,
-                              fontWeight: FontWeight.bold,
-                              letterSpacing: 1.2,
-                            ),
-                          ),
-                          const SizedBox(height: 4),
-                          Row(
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(
-                                _avgRating.toStringAsFixed(1),
-                                style: const TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 32,
-                                  fontWeight: FontWeight.w900,
-                                ),
-                              ),
-                              const Padding(
-                                padding: EdgeInsets.only(bottom: 4.0, left: 4),
-                                child: Text(
-                                  '/ 5.0',
-                                  style: TextStyle(
-                                    color: Colors.white60,
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 4),
-                          Row(
-                            children: List.generate(5, (index) {
-                              return Icon(
-                                index < _avgRating.floor()
-                                    ? Icons.star_rounded
-                                    : Icons.star_border_rounded,
-                                color: const Color(0xFFFDE047),
-                                size: 16,
-                              );
-                            }),
-                          ),
-                        ],
-                      ),
-                      Expanded(
-                        child: Align(
-                          alignment: Alignment.topRight,
-                          child: Container(
-                            padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
-                            decoration: BoxDecoration(
-                              color: Colors.white.withValues(alpha: 0.2),
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                            child: Column(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Text(
-                                  _reviews.length.toString(),
-                                  style: const TextStyle(
-                                    color: Colors.white,
-                                    fontSize: 18,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                                const Text(
-                                  'REVIEWS',
-                                  style: TextStyle(
-                                    color: Colors.white70,
-                                    fontSize: 9,
-                                    fontWeight: FontWeight.bold,
-                                  ),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const Padding(
-                    padding: EdgeInsets.symmetric(vertical: 14),
-                    child: Divider(color: Colors.white24, height: 1),
-                  ),
-                  if (_loadingReviews)
-                    const Center(
-                      child: Padding(
-                        padding: EdgeInsets.all(8.0),
-                        child: CircularProgressIndicator(color: Colors.white),
-                      ),
-                    )
-                  else if (latestReview == null)
-                    const Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Expanded(
-                          child: Text(
-                            'No customer feedback yet. Tap to view details.',
-                            style: TextStyle(color: Colors.white70, fontSize: 13),
-                            maxLines: 2,
-                            overflow: TextOverflow.ellipsis,
-                          ),
-                        ),
-                        SizedBox(width: 8),
-                        Icon(Icons.chevron_right_rounded, color: Colors.white70, size: 20),
-                      ],
-                    )
-                  else ...[
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text(
-                          'Latest: — ${latestReview['profiles']?['full_name'] ?? 'Customer'}',
-                          style: const TextStyle(
-                            color: Colors.white,
-                            fontSize: 12,
-                            fontWeight: FontWeight.bold,
-                          ),
-                        ),
-                        Row(
-                          children: [
-                            Text(
-                              latestReview['created_at'] != null
-                                  ? DateFormat('MMM dd').format(DateTime.parse(latestReview['created_at']))
-                                  : '',
-                              style: const TextStyle(color: Colors.white60, fontSize: 10),
-                            ),
-                            const SizedBox(width: 4),
-                            const Icon(Icons.chevron_right_rounded, color: Colors.white, size: 18),
-                          ],
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      '"${(() {
-                        final rawComment = latestReview['feedback'] ?? latestReview['comment'] ?? latestReview['comments'] ?? latestReview['review'] ?? latestReview['message'] ?? latestReview['text'];
-                        if (rawComment == null || rawComment.toString().trim().isEmpty) {
-                          return 'No comment provided.';
-                        }
-                        return rawComment.toString();
-                      })()}"',
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontSize: 13,
-                        fontStyle: FontStyle.italic,
-                      ),
-                    ),
-                  ],
-                ],
-              ),
-            ),
+            ],
           ),
-        ),
-      ],
-    );
-  }
-
-  Widget _infoRow(IconData icon, String label, String value) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        Icon(icon, size: 20, color: AppColors.primary),
-        const SizedBox(width: 12),
-        Expanded(
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              Text(label, style: const TextStyle(fontSize: 11, color: AppColors.grayText)),
-              Text(value, style: const TextStyle(fontSize: 14, fontWeight: FontWeight.bold, color: AppColors.darkText), softWrap: true),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      const Text(
+                        'SERVICE PERFORMANCE',
+                        style: TextStyle(
+                          color: Colors.white70,
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                          letterSpacing: 1.2,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text(
+                            _avgRating.toStringAsFixed(1),
+                            style: const TextStyle(
+                              color: Colors.white,
+                              fontSize: 32,
+                              fontWeight: FontWeight.w900,
+                            ),
+                          ),
+                          const Padding(
+                            padding: EdgeInsets.only(bottom: 4.0, left: 4),
+                            child: Text(
+                              '/ 5.0',
+                              style: TextStyle(
+                                color: Colors.white60,
+                                fontSize: 13,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 4),
+                      Row(
+                        children: List.generate(5, (index) {
+                          return Icon(
+                            index < _avgRating.floor()
+                                ? Icons.star_rounded
+                                : Icons.star_border_rounded,
+                            color: const Color(0xFFFDE047),
+                            size: 16,
+                          );
+                        }),
+                      ),
+                    ],
+                  ),
+                  Container(
+                    padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.2),
+                      borderRadius: BorderRadius.circular(14),
+                    ),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          _reviews.length.toString(),
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 18,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                        const Text(
+                          'REVIEWS',
+                          style: TextStyle(
+                            color: Colors.white70,
+                            fontSize: 9,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 14),
+                child: Divider(color: Colors.white24, height: 1),
+              ),
+              if (_loadingReviews)
+                const Center(
+                  child: Padding(
+                    padding: EdgeInsets.all(8.0),
+                    child: CircularProgressIndicator(color: Colors.white),
+                  ),
+                )
+              else if (latestReview == null)
+                const Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Expanded(
+                      child: Text(
+                        'No customer feedback yet. Tap to view details.',
+                        style: TextStyle(color: Colors.white70, fontSize: 13),
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                      ),
+                    ),
+                    SizedBox(width: 8),
+                    Icon(Icons.chevron_right_rounded, color: Colors.white70, size: 20),
+                  ],
+                )
+              else ...[
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Text(
+                      'Latest: ${latestReview['profiles']?['full_name'] ?? 'Customer'}',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontSize: 12,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    Row(
+                      children: [
+                        Text(
+                          latestReview['created_at'] != null
+                              ? DateFormat('MMM dd').format(DateTime.parse(latestReview['created_at']))
+                              : '',
+                          style: const TextStyle(color: Colors.white60, fontSize: 10),
+                        ),
+                        const SizedBox(width: 4),
+                        const Icon(Icons.chevron_right_rounded, color: Colors.white, size: 18),
+                      ],
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 6),
+                Text(
+                  '"${(() {
+                    final rawComment = latestReview['feedback'] ?? latestReview['comment'] ?? latestReview['comments'] ?? latestReview['review'] ?? latestReview['message'] ?? latestReview['text'];
+                    if (rawComment == null || rawComment.toString().trim().isEmpty) {
+                      return 'No comment provided.';
+                    }
+                    return rawComment.toString();
+                  })()}"',
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontSize: 13,
+                    fontStyle: FontStyle.italic,
+                  ),
+                ),
+              ],
             ],
           ),
         ),
-      ],
+      ),
     );
   }
 }
@@ -7262,31 +7597,31 @@ class _TaskActionPageState extends State<TaskActionPage> {
                   child: CircleAvatar(
                     backgroundColor: Colors.black.withValues(alpha: 0.6),
                     child: IconButton(
-                      icon: const Icon(Icons.close, color: Colors.white, size: 20),
+                      icon: const Icon(Icons.close_rounded, color: Colors.white, size: 20),
                       onPressed: () => Navigator.pop(context),
                     ),
                   ),
                 ),
                 Center(
                   child: SizedBox(
-                    width: 220,
-                    height: 220,
+                    width: 240,
+                    height: 240,
                     child: Stack(
                       children: [
                         Container(
                           decoration: BoxDecoration(
-                            borderRadius: BorderRadius.circular(20),
-                            border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.3), width: 2),
+                            borderRadius: BorderRadius.circular(24),
+                            border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.3), width: 1.5),
                           ),
                         ),
                         // Top Left Corner
                         Positioned(
                           top: 0, left: 0,
                           child: Container(
-                            width: 28, height: 28,
+                            width: 32, height: 32,
                             decoration: const BoxDecoration(
                               border: Border(top: BorderSide(color: Color(0xFF38BDF8), width: 4), left: BorderSide(color: Color(0xFF38BDF8), width: 4)),
-                              borderRadius: BorderRadius.only(topLeft: Radius.circular(20)),
+                              borderRadius: BorderRadius.only(topLeft: Radius.circular(24)),
                             ),
                           ),
                         ),
@@ -7294,10 +7629,10 @@ class _TaskActionPageState extends State<TaskActionPage> {
                         Positioned(
                           top: 0, right: 0,
                           child: Container(
-                            width: 28, height: 28,
+                            width: 32, height: 32,
                             decoration: const BoxDecoration(
                               border: Border(top: BorderSide(color: Color(0xFF38BDF8), width: 4), right: BorderSide(color: Color(0xFF38BDF8), width: 4)),
-                              borderRadius: BorderRadius.only(topRight: Radius.circular(20)),
+                              borderRadius: BorderRadius.only(topRight: Radius.circular(24)),
                             ),
                           ),
                         ),
@@ -7305,10 +7640,10 @@ class _TaskActionPageState extends State<TaskActionPage> {
                         Positioned(
                           bottom: 0, left: 0,
                           child: Container(
-                            width: 28, height: 28,
+                            width: 32, height: 32,
                             decoration: const BoxDecoration(
                               border: Border(bottom: BorderSide(color: Color(0xFF38BDF8), width: 4), left: BorderSide(color: Color(0xFF38BDF8), width: 4)),
-                              borderRadius: BorderRadius.only(bottomLeft: Radius.circular(20)),
+                              borderRadius: BorderRadius.only(bottomLeft: Radius.circular(24)),
                             ),
                           ),
                         ),
@@ -7316,10 +7651,10 @@ class _TaskActionPageState extends State<TaskActionPage> {
                         Positioned(
                           bottom: 0, right: 0,
                           child: Container(
-                            width: 28, height: 28,
+                            width: 32, height: 32,
                             decoration: const BoxDecoration(
                               border: Border(bottom: BorderSide(color: Color(0xFF38BDF8), width: 4), right: BorderSide(color: Color(0xFF38BDF8), width: 4)),
-                              borderRadius: BorderRadius.only(bottomRight: Radius.circular(20)),
+                              borderRadius: BorderRadius.only(bottomRight: Radius.circular(24)),
                             ),
                           ),
                         ),
@@ -7327,14 +7662,24 @@ class _TaskActionPageState extends State<TaskActionPage> {
                     ),
                   ),
                 ),
-                const Positioned(
-                  bottom: 60,
-                  left: 0,
-                  right: 0,
-                  child: Text(
-                    'Align Physical Gallon QR Tag within Frame',
-                    textAlign: TextAlign.center,
-                    style: TextStyle(color: Colors.white, fontSize: 14, fontWeight: FontWeight.bold),
+                Positioned(
+                  bottom: 50,
+                  left: 20,
+                  right: 20,
+                  child: Center(
+                    child: Container(
+                      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 8),
+                      decoration: BoxDecoration(
+                        color: Colors.black.withValues(alpha: 0.7),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFF38BDF8).withValues(alpha: 0.3)),
+                      ),
+                      child: const Text(
+                        'ALIGN GALLON QR TAG WITHIN SCAN FRAME',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(color: Color(0xFF38BDF8), fontSize: 11, fontWeight: FontWeight.w900, letterSpacing: 0.8),
+                      ),
+                    ),
                   ),
                 ),
               ],
