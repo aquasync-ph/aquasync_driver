@@ -3,86 +3,90 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
 class AppColors {
-  // 60% Dominant - Backgrounds
-  static const Color dominantLightBlue = Color(0xFFF5FBFF); // Very Pale Blue / Frost White
-  static const Color frostWhite = Color(0xFFFFFFFF);        // Solid White
-  static const Color scaffold = dominantLightBlue;          // 60% Dominant Background
+  // iOS 18 / Apple Pro Titanium & Deep Navy Design System
+  static const Color iosBackground = Color(0xFFF2F4F8);      // Ultra-clean iOS system background
+  static const Color dominantLightBlue = Color(0xFFF5FBFF); // Frost White / Pale Blue
+  static const Color frostWhite = Color(0xFFFFFFFF);        // Pure White
+  static const Color scaffold = iosBackground;              
   static const Color surface = Colors.white;
 
-  // 30% Secondary - Cards, Panels, & Sidebars
-  static const Color darkRoyalBlue = Color(0xFF0F2573);     // Dark Royal Blue (Secondary Structure)
-  static const Color border = Color(0xFFE2E8F0);            // Light Slate/Gray for borders
+  // iOS Secondary & Structured Surfaces
+  static const Color darkRoyalBlue = Color(0xFF0F2573);     // Deep Royal Blue
+  static const Color appleBlue = Color(0xFF007AFF);         // Native iOS System Blue
+  static const Color border = Color(0xFFE2E8F0);            // Sleek Light Border
+  static const Color iosCardBorder = Color(0xFFD1D5DB);     // Refined iOS Border
   static const Color secondary = darkRoyalBlue;
-  static Color glassBackground = Colors.white.withValues(alpha: 0.75); // 75% Opacity White Glass
-  static Color glassBorder = const Color(0xFFE2E8F0).withValues(alpha: 0.8);
+  
+  static Color glassBackground = Colors.white.withValues(alpha: 0.82); // Frosted Glass Opacity
+  static Color glassBorder = const Color(0xFFFFFFFF).withValues(alpha: 0.9);
 
-  // 10% Accent - Buttons, Texts, & Highlights
-  static const Color mediumBlue = Color(0xFF266CA9);        // Medium Blue (Accent)
-  static const Color darkNavy = Color(0xFF041D56);          // Deep Sea Navy (Accent)
-  static const Color midnightBlue = Color(0xFF01082D);      // Midnight Blue (Deepest Tone)
-  static const Color accent = mediumBlue;
+  // High-Tech Accent Palette
+  static const Color mediumBlue = Color(0xFF266CA9);        // Premium Accent Blue
+  static const Color darkNavy = Color(0xFF041D56);          // High-Tech Navy
+  static const Color midnightBlue = Color(0xFF01082D);      // Midnight Space Blue
+  static const Color accent = appleBlue;
 
-  // Typography Palette
-  static const Color darkText = Color(0xFF0F2573);         // Dark Royal Blue acting as Secondary for Text
-  static const Color slateText = Color(0xFF334155);        // Slate Gray Text
-  static const Color grayText = Color(0xFF64748B);         // Subdued Gray Text
+  // Typography Palette (SF Pro / Modern iOS Style)
+  static const Color darkText = Color(0xFF0B192C);         // Deep Tech Dark
+  static const Color slateText = Color(0xFF334155);        // Slate Text
+  static const Color grayText = Color(0xFF64748B);         // Subdued Gray
 
-  // Functional Status Colors
-  static const Color successGreen = Color(0xFF10B981);
-  static const Color successBg = Color(0xFFDCFCE7);
+  // Functional Status Colors (Apple HIG Aligned)
+  static const Color successGreen = Color(0xFF34C759);      // iOS System Green
+  static const Color successBg = Color(0xFFE8F8EC);
   static const Color successBorder = Color(0xFF86EFAC);
 
-  static const Color warningAmber = Color(0xFFF59E0B);
-  static const Color warningBg = Color(0xFFFEF3C7);
+  static const Color warningAmber = Color(0xFFFF9500);      // iOS System Orange/Amber
+  static const Color warningBg = Color(0xFFFFF7ED);
   static const Color warningBorder = Color(0xFFFDE68A);
 
-  static const Color errorRed = Color(0xFFEF4444);
+  static const Color errorRed = Color(0xFFFF3B30);          // iOS System Red
   static const Color errorBg = Color(0xFFFEE2E2);
   static const Color errorBorder = Color(0xFFFCA5A5);
 
-  // Legacy Aliases for seamless compatibility
+  // Legacy Aliases
   static const Color navy = darkNavy;
-  static const Color primary = mediumBlue; // Mapped to 10% Accent
-  static const Color tertiary = darkRoyalBlue; // Mapped to 30% Secondary
+  static const Color primary = appleBlue;
+  static const Color tertiary = darkRoyalBlue;
   static const Color primaryNavy = darkNavy;
   static const Color primaryBlue = mediumBlue;
   static const Color skyBlue = dominantLightBlue;
   static const Color background = scaffold;
-  static const Color lightBg = Color(0xFFF1F5F9);
+  static const Color lightBg = Color(0xFFF8FAFC);
 }
 
 class AppGradients {
-  // 60% Dominant Background Gradient (Pale Blue to White)
+  // iOS Ultra-Clean Background Gradient
   static const LinearGradient frostBackground = LinearGradient(
     colors: [
-      Color(0xFFF5FBFF),
-      Colors.white,
+      Color(0xFFF8FAFC),
+      Color(0xFFEEF2F6),
     ],
     begin: Alignment.topCenter,
     end: Alignment.bottomCenter,
   );
 
-  // 30% Secondary Panel Gradient (Dark Royal Blue)
-  static const LinearGradient mediumBluePanel = LinearGradient(
+  // High-Tech iOS Dark Titanium Panel
+  static const LinearGradient iosDarkPanel = LinearGradient(
     colors: [
       Color(0xFF0F2573),
-      Color(0xFF0C1D5A),
-    ],
-    begin: Alignment.topLeft,
-    end: Alignment.bottomRight,
-  );
-
-  // 10% Accent Button Gradient (Medium Blue to Deep Sea Navy)
-  static const LinearGradient accentButton = LinearGradient(
-    colors: [
-      Color(0xFF266CA9),
       Color(0xFF041D56),
     ],
     begin: Alignment.topLeft,
     end: Alignment.bottomRight,
   );
 
-  // Deep Accent Gradient
+  // Vibrant Apple Blue Gradient
+  static const LinearGradient accentButton = LinearGradient(
+    colors: [
+      Color(0xFF007AFF),
+      Color(0xFF0056B3),
+    ],
+    begin: Alignment.topLeft,
+    end: Alignment.bottomRight,
+  );
+
+  // Royal Midnight High-Tech Glow
   static const LinearGradient royalMidnight = LinearGradient(
     colors: [
       Color(0xFF266CA9),
@@ -92,29 +96,33 @@ class AppGradients {
     end: Alignment.bottomRight,
   );
 
-  // Aliases
-  static const LinearGradient ocean = mediumBluePanel;
+  static const LinearGradient ocean = iosDarkPanel;
   static const LinearGradient electric = accentButton;
 }
 
 class AppDesign {
-  static const double cardRadius = 24.0;
-  static const double buttonRadius = 18.0;
-  static const double inputRadius = 16.0;
+  // iOS 18 Style Radii (Smooth Rounded Corners)
+  static const double cardRadius = 22.0;
+  static const double buttonRadius = 16.0;
+  static const double inputRadius = 14.0;
+  static const double badgeRadius = 10.0;
 
-  static List<BoxShadow> premiumShadow = [
+  // iPhone-grade Multi-layered Soft Shadows (HIG Depth)
+  static List<BoxShadow> iosCardShadow = [
     BoxShadow(
-      color: AppColors.midnightBlue.withValues(alpha: 0.06),
-      blurRadius: 24,
-      offset: const Offset(0, 10),
+      color: Colors.black.withValues(alpha: 0.04),
+      blurRadius: 20,
+      offset: const Offset(0, 8),
       spreadRadius: 0,
     ),
     BoxShadow(
-      color: AppColors.mediumBlue.withValues(alpha: 0.08),
-      blurRadius: 12,
-      offset: const Offset(0, 4),
+      color: AppColors.appleBlue.withValues(alpha: 0.06),
+      blurRadius: 10,
+      offset: const Offset(0, 2),
     ),
   ];
+
+  static List<BoxShadow> premiumShadow = iosCardShadow;
 }
 
 class GlassCard extends StatelessWidget {
@@ -133,8 +141,8 @@ class GlassCard extends StatelessWidget {
     this.width,
     this.height,
     this.padding,
-    this.blur = 16.0,
-    this.opacity = 0.75, // Defaulting to 75% for 30% Secondary Glass White
+    this.blur = 20.0,
+    this.opacity = 0.85,
     this.borderRadius = AppDesign.cardRadius,
     this.borderColor,
   });
@@ -153,10 +161,10 @@ class GlassCard extends StatelessWidget {
             color: Colors.white.withValues(alpha: opacity),
             borderRadius: BorderRadius.circular(borderRadius),
             border: Border.all(
-              color: borderColor ?? AppColors.border,
+              color: borderColor ?? Colors.white.withValues(alpha: 0.8),
               width: 1.2,
             ),
-            boxShadow: AppDesign.premiumShadow,
+            boxShadow: AppDesign.iosCardShadow,
           ),
           child: child,
         ),
@@ -182,7 +190,7 @@ class LiquidButton extends StatelessWidget {
     this.icon,
     this.color,
     this.textColor,
-    this.height = 52,
+    this.height = 54,
   });
 
   @override
@@ -200,7 +208,7 @@ class LiquidButton extends StatelessWidget {
         child: InkWell(
           onTap: onTap != null
               ? () {
-                  HapticFeedback.lightImpact();
+                  HapticFeedback.mediumImpact(); // iOS Tactile Feedback
                   onTap!();
                 }
               : null,
@@ -212,22 +220,16 @@ class LiquidButton extends StatelessWidget {
                   ? AppGradients.accentButton
                   : null,
               color: onTap == null
-                  ? Colors.grey[300]
+                  ? Colors.grey[200]
                   : (isCustomColor ? color : null),
               borderRadius: BorderRadius.circular(AppDesign.buttonRadius),
-              border: isTranslucent
-                  ? Border.all(
-                      color: (textColor ?? color ?? AppColors.primary).withValues(alpha: 0.2),
-                      width: 1.2,
-                    )
-                  : null,
               boxShadow: (onTap != null && !isTranslucent)
                   ? [
                       BoxShadow(
-                        color: (color ?? AppColors.darkRoyalBlue)
-                            .withValues(alpha: 0.25),
-                        blurRadius: 12,
-                        offset: const Offset(0, 4),
+                        color: (color ?? AppColors.appleBlue)
+                            .withValues(alpha: 0.3),
+                        blurRadius: 16,
+                        offset: const Offset(0, 6),
                       )
                     ]
                   : null,
@@ -257,10 +259,11 @@ class LiquidButton extends StatelessWidget {
                         Text(
                           label.toUpperCase(),
                           style: TextStyle(
+                            fontFamily: 'Poppins',
                             color: effectiveTextColor,
-                            fontSize: 13,
-                            fontWeight: FontWeight.w900,
-                            letterSpacing: 0.8,
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                            letterSpacing: 0.6,
                           ),
                         ),
                       ],
@@ -279,37 +282,37 @@ class AquaTheme {
         fontFamily: 'Poppins',
         scaffoldBackgroundColor: AppColors.scaffold,
         colorScheme: ColorScheme.fromSeed(
-          seedColor: AppColors.darkRoyalBlue,
-          primary: AppColors.darkRoyalBlue,
-          secondary: AppColors.mediumBlue,
-          tertiary: AppColors.darkNavy,
+          seedColor: AppColors.appleBlue,
+          primary: AppColors.appleBlue,
+          secondary: AppColors.darkRoyalBlue,
+          tertiary: AppColors.mediumBlue,
           surface: Colors.white,
           outline: AppColors.border,
         ),
         appBarTheme: const AppBarTheme(
           backgroundColor: Colors.transparent,
-          foregroundColor: AppColors.midnightBlue,
+          foregroundColor: AppColors.darkText,
           elevation: 0,
           centerTitle: true,
           titleTextStyle: TextStyle(
             fontFamily: 'Poppins',
-            fontWeight: FontWeight.w900,
+            fontWeight: FontWeight.w800,
             fontSize: 18,
-            color: AppColors.midnightBlue,
-            letterSpacing: -0.3,
+            color: AppColors.darkText,
+            letterSpacing: -0.4,
           ),
         ),
         cardTheme: CardThemeData(
           elevation: 0,
           shape: RoundedRectangleBorder(
             borderRadius: BorderRadius.circular(AppDesign.cardRadius),
-            side: const BorderSide(color: AppColors.border, width: 1.2),
+            side: const BorderSide(color: AppColors.border, width: 1.0),
           ),
           color: Colors.white,
         ),
         inputDecorationTheme: InputDecorationTheme(
           filled: true,
-          fillColor: Colors.white.withValues(alpha: 0.9),
+          fillColor: Colors.white,
           contentPadding:
               const EdgeInsets.symmetric(horizontal: 20, vertical: 18),
           border: OutlineInputBorder(
@@ -323,7 +326,7 @@ class AquaTheme {
           focusedBorder: OutlineInputBorder(
             borderRadius: BorderRadius.circular(AppDesign.inputRadius),
             borderSide: const BorderSide(
-                color: AppColors.darkRoyalBlue, width: 2),
+                color: AppColors.appleBlue, width: 2),
           ),
           labelStyle: const TextStyle(
               color: AppColors.grayText,
@@ -334,20 +337,20 @@ class AquaTheme {
         ),
         elevatedButtonTheme: ElevatedButtonThemeData(
           style: ElevatedButton.styleFrom(
-            backgroundColor: AppColors.darkRoyalBlue,
+            backgroundColor: AppColors.appleBlue,
             foregroundColor: Colors.white,
-            minimumSize: const Size(double.infinity, 56),
+            minimumSize: const Size(double.infinity, 54),
             shape: RoundedRectangleBorder(
               borderRadius: BorderRadius.circular(AppDesign.buttonRadius),
             ),
             textStyle: const TextStyle(
               fontFamily: 'Poppins',
               fontSize: 14,
-              fontWeight: FontWeight.w900,
-              letterSpacing: 0.8,
+              fontWeight: FontWeight.w800,
+              letterSpacing: 0.6,
             ),
             elevation: 4,
-            shadowColor: AppColors.darkRoyalBlue.withValues(alpha: 0.35),
+            shadowColor: AppColors.appleBlue.withValues(alpha: 0.35),
           ),
         ),
       );
