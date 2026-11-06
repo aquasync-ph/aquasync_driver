@@ -328,6 +328,31 @@ class SupabaseService {
     return accumulatedData;
   }
 
+  /// Verify customer's RFID Loyalty Card code upon delivery
+  static Future<bool> verifyCustomerRfidForDelivery({
+    required String customerId,
+    required String scannedRfidCode,
+  }) async {
+    final cleanUid = scannedRfidCode.trim();
+    if (cleanUid.isEmpty) return false;
+
+    try {
+      final record = await client
+          .from('rfid_qr_records')
+          .select('id')
+          .eq('customer_id', customerId)
+          .eq('code', cleanUid)
+          .eq('code_type', 'RFID')
+          .eq('is_active', true)
+          .maybeSingle();
+
+      return record != null;
+    } catch (e) {
+      debugPrint('Error verifying customer RFID for delivery: $e');
+      return false;
+    }
+  }
+
   /// Realtime channel subscription for automatic station updates.
   /// When Admin modifies station coordinates or geofence radius in Admin Dashboard,
   /// this stream listener fires and re-fetches updated station location.
